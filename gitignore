@@ -1,0 +1,24 @@
+# Dados e infraestrutura local (Decision 018 - nunca versionar dados, só código)
+data/
+chats/*
+!chats/.gitkeep
+knowledge/cache/
+searxng/settings.yml
+
+# Python
+*.pyc
+__pycache__/
+.venv/
+venv/
+*.egg-info/
+
+# Sistema / editor
+.directory
+.DS_Store
+
+# Downloads acidentais
+zips/
+*.zip
+
+# Ambiente
+.env
