@@ -1,7 +1,0 @@
-data/
-chats/*
-!chats/.gitkeep
-knowledge/cache/
-*.pyc
-__pycache__/
-.env
