@@ -1,62 +1,83 @@
-# Tutorial — Passo 2.5 (Hybrid Search: dense + BM25 + RRF)
+# Tutorial — Fase 03, Passo 3.1 (Infra: SearXNG + cliente de busca)
 
-Este arquivo explica só os arquivos entregues nesta etapa. Para setup geral do zero, veja o `README.md`.
+Este tutorial cobre **apenas os arquivos entregues neste passo**. Não acumula
+histórico de passos anteriores (isso fica no `README.md` e no `docs/STATUS.md`).
 
 ## O que foi entregue
 
-| Arquivo | Onde colocar | O que faz |
-|---|---|---|
-| `fusion.py` | `src/retrieval/fusion.py` | Combina duas listas rankeadas (dense + sparse) em uma só, via Reciprocal Rank Fusion |
-| `bm25_index.py` | `src/retrieval/bm25_index.py` | Monta um índice de busca por palavra-chave (BM25) em memória, a partir do `global_scope` |
-| `hybrid_search.py` | `src/retrieval/hybrid_search.py` | Orquestra tudo: busca por significado (dense) + busca por palavra-chave (BM25) + fusão |
-| `search.py` | `scripts/search.py` | Script que você roda no terminal para fazer uma busca de verdade |
-| `test_rrf.py` | `tests/test_rrf.py` | Testa a lógica de fusão isoladamente, sem precisar de Qdrant nem Ollama |
+| Arquivo | Onde colocar |
+|---|---|
+| `docker-compose.yml` | `IA-LOCAL/docker-compose.yml` (substitui o antigo — o serviço `qdrant` continua igual, só foi somado o `searxng`) |
+| `src/search/__init__.py` | `IA-LOCAL/src/search/__init__.py` (pasta nova) |
+| `src/search/searxng_client.py` | `IA-LOCAL/src/search/searxng_client.py` |
+| `scripts/search_web.py` | `IA-LOCAL/scripts/search_web.py` |
+| `tests/test_searxng_client.py` | `IA-LOCAL/tests/test_searxng_client.py` |
 
-## Como rodar
+Se algum arquivo já existir com esse nome (caso do `docker-compose.yml`), apague o antigo antes de copiar o novo.
+
+## O que cada coisa faz
+
+- **SearXNG**: meta-buscador self-hosted (agrega Google/Bing/DuckDuckGo etc). Sobe via Docker igual ao Qdrant, expõe REST API na porta `8080`.
+- **`searxng_client.py`**: função `search(query, max_results, categories)` — chama o SearXNG e devolve resultados normalizados (`title`, `url`, `snippet`, `engine`).
+- **`search_web.py`**: CLI manual para testar o cliente isoladamente, sem precisar escrever código.
+- **`test_searxng_client.py`**: teste de integração (precisa do SearXNG no ar), confirma que a busca retorna resultados válidos e que `max_results` é respeitado.
+
+## Setup (só deste passo)
 
 ```bash
 cd ~/IA-LOCAL
 
-# 1. Nova dependência: instale antes de tudo
-pip install -r requirements.txt
-
-# 2. Teste rápido, sem rede — confirma que a lógica de fusão está correta
-python tests/test_rrf.py
-
-# 3. Se ainda não ingeriu nenhum documento, faça isso primeiro (senão a busca vem vazia)
-python scripts/ingest_document.py knowledge/documents/algum_arquivo.md
-
-# 4. Busca de verdade
-python scripts/search.py "sua pergunta aqui"
+# 1. Sobe o SearXNG (gera settings.yml padrão na primeira vez)
+docker compose up -d searxng
 ```
 
-## O que esperar no terminal
+### Configuração manual obrigatória
 
-`test_rrf.py` deve imprimir 4 linhas de `[ok]` e terminar com "Todos os testes de RRF passaram."
+O SearXNG **bloqueia JSON por padrão** — sem isso o cliente Python não funciona.
 
-`search.py` deve imprimir algo assim:
-
-```
-1. [score=0.0328] fonte=algum_arquivo.md
-   Aqui vem um trecho do texto encontrado...
-
-2. [score=0.0301] fonte=outro_arquivo.md
-   ...
+```bash
+nano searxng/settings.yml
 ```
 
-O `score` é só um número relativo pra ordenar — não é "porcentagem de certeza".
+Garanta na seção `search:`:
+```yaml
+search:
+  formats:
+    - html
+    - json
+```
+
+Gere e cole uma `secret_key` real (o padrão vem com valor de exemplo inseguro, não usar em produção):
+```bash
+openssl rand -hex 32
+```
+Cole o resultado em `server.secret_key`, no mesmo arquivo.
+
+```bash
+docker compose restart searxng
+```
+
+## Como testar
+
+```bash
+# 1. Teste bruto via curl — confirma que o JSON está habilitado
+curl "http://localhost:8080/search?q=teste&format=json"
+
+# 2. CLI manual
+python scripts/search_web.py "arch linux"
+python scripts/search_web.py "arch linux" --max-results 3
+
+# 3. Teste automatizado
+python tests/test_searxng_client.py
+```
 
 ## Checklist de validação
 
-- [ ] `test_rrf.py` passa todos os asserts
-- [ ] `search.py` com uma pergunta relacionada a um documento já ingerido retorna esse documento entre os resultados
-- [ ] Rodar a mesma busca duas vezes dá resultado consistente (BM25 é determinístico, dense também)
+- [ ] `docker compose ps` mostra `ia_local_searxng` rodando
+- [ ] `curl ".../search?q=teste&format=json"` retorna JSON com `"results"` preenchido (não HTML, não erro 403)
+- [ ] `scripts/search_web.py` imprime resultados legíveis com título, url e snippet
+- [ ] `tests/test_searxng_client.py` termina com `Todos os testes do cliente SearXNG passaram.`
 
-## Decisões desta etapa
+## Próximo passo (3.2)
 
-- BM25 em memória (`rank_bm25`), reconstruído a cada busca — não sparse vectors nativos do Qdrant. Simplicidade > otimização prematura, dado o tamanho do seu acervo pessoal.
-- Fusão via RRF (k=60), não normalização de score entre dense e sparse.
-
-## Próximo passo
-
-2.6 — Reranker (ainda escolhendo o modelo, será validado antes de entregar código).
+Fetch + extração de conteúdo das URLs candidatas via **Crawl4AI** (decisão já confirmada — resolve fetch e extração de markdown limpo num passo só, evitando montar Playwright + lib de extração separada).
