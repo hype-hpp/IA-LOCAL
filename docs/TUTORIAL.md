@@ -1,4 +1,4 @@
-# Tutorial — Fase 03, Passo 3.4 (Multi-query via GPT-OSS)
+# Tutorial — Fase 03, Passo 3.5 (Fechamento da fase)
 
 Este tutorial cobre **apenas os arquivos entregues neste passo**. Não acumula
 histórico de passos anteriores (isso fica no `README.md` e no `docs/STATUS.md`).
@@ -7,47 +7,38 @@ histórico de passos anteriores (isso fica no `README.md` e no `docs/STATUS.md`)
 
 | Arquivo | Onde colocar |
 |---|---|
-| `src/search/query_expansion.py` | `IA-LOCAL/src/search/query_expansion.py` |
-| `src/search/multi_query.py` | `IA-LOCAL/src/search/multi_query.py` |
-| `scripts/web_research.py` | `IA-LOCAL/scripts/web_research.py` (substitui o do 3.3 — mesma ideia, agora com multi-query) |
-| `tests/test_query_expansion_parsing.py` | `IA-LOCAL/tests/test_query_expansion_parsing.py` |
-| `tests/test_multi_query_dedup.py` | `IA-LOCAL/tests/test_multi_query_dedup.py` |
+| `tests/test_web_research_e2e.py` | `IA-LOCAL/tests/test_web_research_e2e.py` |
+
+Além disso, os documentos-mestre do projeto (fora do repositório Git, mantidos separadamente) foram atualizados para refletir a Fase 03 concluída: `05_ROADMAP.md`, `06_DECISIONS.md` (Decisions 026-030), `08_ESTRUTURA.md` e `04_CURRENT_STATE.md`.
 
 ## O que cada coisa faz
 
-- **`query_expansion.py`**: reaproveita o GPT-OSS (já residente na VRAM, mesmo princípio do reranker — Decision 025) para gerar variações da pergunta do usuário via prompt + JSON Schema forçado. Se o LLM falhar ou não devolver nada parseável, retorna lista vazia — não é erro fatal, só significa que a busca segue só com a query original.
-- **`multi_query.py`**: junta a query original com as variações (`merge_queries`, sem duplicatas), busca cada uma no SearXNG, e deduplica os resultados por URL (`_dedup_by_url`) — a mesma página não aparece duas vezes só porque foi encontrada por duas queries diferentes.
-- **`web_research.py`**: agora usa multi-query por padrão. Flag `--no-multi-query` pula a geração de variações (útil pra debug ou pra comparar antes/depois). Flag `--num-variations` controla quantas variações gerar (default 3).
-- **`test_query_expansion_parsing.py`** e **`test_multi_query_dedup.py`**: testam a lógica pura (parsing da resposta do LLM, merge de queries, dedup por URL) sem precisar de rede — mesmo padrão do `test_llm_reranker_parsing.py` da Fase 02.
-
-## Decisão confirmada neste passo
-
-Multi-query entra na Fase 03 (não ficou pra depois), reaproveitando o GPT-OSS como worker — mesmo padrão já estabelecido no reranker (Decision 025) e no roteamento código/geral (Decision 016): usar o modelo já residente na VRAM para tarefas auxiliares em vez de subir lógica ou modelo dedicado.
+- **`test_web_research_e2e.py`**: teste de integração cobrindo o pipeline inteiro da Fase 03 de ponta a ponta — multi-query (3.4) → busca no SearXNG (3.1) → fetch/extração via Crawl4AI (3.2) → montagem e indexação de evidências no `chat_scope` (3.3) — chamando as funções diretamente (não via subprocess), o que permite validar cada etapa com asserts específicos. Usa um `chat_id` isolado e limpa antes/depois, como os outros testes de integração da Fase 02/03.
 
 ## Como testar
 
 ```bash
 cd ~/IA-LOCAL
-
-# 1. Testes rápidos, sem rede
-python tests/test_query_expansion_parsing.py
-python tests/test_multi_query_dedup.py
-
-# 2. Fluxo completo com multi-query (padrão)
-python scripts/web_research.py "o que é RAG em inteligência artificial" --chat-id teste_3_4
-
-# 3. Comparação: mesma busca sem multi-query
-python scripts/web_research.py "o que é RAG em inteligência artificial" --chat-id teste_3_4 --no-multi-query
+python tests/test_web_research_e2e.py
 ```
+
+Precisa de SearXNG, Ollama (embedding + GPT-OSS) e Qdrant todos no ar — é o teste mais "pesado" da Fase 03, roda o fluxo real completo.
 
 ## Checklist de validação
 
-- [ ] `test_query_expansion_parsing.py` termina com `Todos os testes de parsing de query_expansion passaram.`
-- [ ] `test_multi_query_dedup.py` termina com `Todos os testes de multi_query (lógica pura) passaram.`
-- [ ] `web_research.py` (com multi-query) mostra as queries geradas antes da busca, e o número de URLs únicas após dedup
-- [ ] Rodar com `--no-multi-query` mostra só a query original na lista de "Queries usadas"
-- [ ] Nenhuma URL duplicada aparece entre os candidatos finais
+- [ ] `test_web_research_e2e.py` termina com `Pipeline completo da Fase 03 validado de ponta a ponta.`
+- [ ] Nenhum dado de teste sobra no `chat_scope` depois (o `cleanup()` roda no início e no fim)
 
-## Próximo passo (3.5)
+## Fase 03 — Resumo do que foi entregue
 
-Fechamento da Fase 03: revisão geral, testes de integração end-to-end cobrindo o pipeline completo, e atualização dos documentos-mestre (`05_ROADMAP.md`, `06_DECISIONS.md`, `08_ESTRUTURA.md`) — igual foi feito ao fechar a Fase 02.
+| Passo | Entrega |
+|---|---|
+| 3.1 | SearXNG (infra) + `searxng_client.py` |
+| 3.2 | `page_fetcher.py` (fetch + extração via Crawl4AI) |
+| 3.3 | `evidence.py` + `web_research.py` (dedup, chunking, inserção no chat_scope) |
+| 3.4 | `query_expansion.py` + `multi_query.py` (multi-query via GPT-OSS) |
+| 3.5 | `test_web_research_e2e.py` + fechamento da documentação |
+
+## Próxima fase
+
+Fase 04 — Coding Agent + Sandbox (Qwen3-Coder como Tool + Docker sandbox), conforme `05_ROADMAP.md`. Me avisa quando quiser começar que a gente aplica o mesmo processo de mini-passos.
