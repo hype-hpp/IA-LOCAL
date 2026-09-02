@@ -31,8 +31,8 @@
 |---|---|---|
 | 3.1 | SearXNG (infra) + cliente de busca (`searxng_client.py`) | ✅ validado |
 | 3.2 | Fetch + extração de conteúdo via Crawl4AI (`page_fetcher.py`) | ✅ validado |
-| 3.3 | Pipeline de evidências (dedup + chunking + chat_scope, `evidence.py` + `web_research.py`) | ⏳ aguardando validação |
-| 3.4 | Multi-query via GPT-OSS | pendente |
+| 3.3 | Pipeline de evidências (dedup + chunking + chat_scope, `evidence.py` + `web_research.py`) | ✅ validado |
+| 3.4 | Multi-query via GPT-OSS (`query_expansion.py` + `multi_query.py`) | ⏳ aguardando validação |
 | 3.5 | Testes finais de integração + fechamento da fase | pendente |
 
 ### Decisões-chave desta fase (confirmadas até agora)
