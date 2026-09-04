@@ -49,8 +49,8 @@
 |---|---|---|
 | 4.1 | Infra do sandbox (`Dockerfile` + `executor.py`, container efêmero + isolamento) | ✅ validado |
 | 4.2 | Tool Qwen3-Coder (`coder_client.py`, gera/corrige código via Ollama) | ✅ validado |
-| 4.3 | Loop de iteração (`agent_loop.py`, executa → erro → corrige → executa de novo) | ⏳ aguardando validação |
-| 4.4 | Teste end-to-end + fechamento da fase | pendente |
+| 4.3 | Loop de iteração (`agent_loop.py`, executa → erro → corrige → executa de novo) | ✅ validado |
+| 4.4 | Teste end-to-end + fechamento da fase (`test_coding_agent_e2e.py` + `__init__.py` faltantes) | ⏳ aguardando validação |
 
 ### Decisões tomadas até agora nesta fase
 
@@ -61,6 +61,10 @@
 - **Geração de código sem JSON Schema forçado** (4.2): ao contrário do reranker/query-expansion, o Qwen3-Coder responde em um bloco ```` ```python ```` cercado, extraído via regex.
 - `generate_code()` cobre geração nova E correção (via `previous_code`/`error` opcionais) na mesma função — o loop de iteração (4.3) reaproveita sem duplicar lógica de prompt.
 - **Loop de iteração (4.3)**: `CoderError` na geração (falha de infraestrutura) interrompe o loop imediatamente, sem contar como tentativa — diferente de uma execução que falhou por erro no código, que é elegível a correção automática.
-- Validado empiricamente que `qwen3-coder:30b` é a tag correta no Ollama (confirmado no passo 4.2, ao contrário do que estava marcado como pendente).
+- Validado empiricamente que `qwen3-coder:30b` é a tag correta no Ollama.
+- **`DEFAULT_MAX_ATTEMPTS` ajustado de 3 para 5** (mudança feita por hp após validar o 4.3 em uso real; possível revisão futura para 10, a confirmar com mais uso real, regra 5 do projeto).
+- Teste real do 4.3 confirmou o retry funcionando ponta a ponta: tarefa de leitura de CSV inexistente levou 3 tentativas até o Qwen3-Coder contornar sozinho (usando `tempfile` em vez de escrever em `/sandbox`, sem permissão de escrita sem `CAP_DAC_OVERRIDE`) — possível ajuste futuro se o sandbox precisar permitir escrita de arquivos de saída (ex: gráficos do matplotlib).
+- **Teste e2e (4.4)** usa uma tarefa que exige rede para testar de forma determinística o caminho "esgota as tentativas sem sucesso" — não depende de o modelo cooperar em falhar de um jeito específico.
+- **Limpeza de `__init__.py`** (4.4): adicionados os que faltavam em `src/`, `src/ingestion/` e `src/retrieval/`, deixando o repo consistente com o `08_ESTRUTURA.md` (pendência identificada nas verificações do repo real ao longo da fase).
 
-(Registro formal das decisões definitivas vai para `06_DECISIONS.md` quando a fase fechar — ver `PROCESSO_DE_TRABALHO.md`, seção 4.)
+(Registro formal das decisões definitivas vai para `06_DECISIONS.md` assim que a fase fechar — ver `PROCESSO_DE_TRABALHO.md`, seção 4. Preparado assim que a validação do 4.4 for confirmada.)
