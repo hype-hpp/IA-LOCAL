@@ -43,14 +43,14 @@
 
 ---
 
-## Fase 04 (Coding Agent + Sandbox) — EM ANDAMENTO
+## Fase 04 (Coding Agent + Sandbox) — CONCLUÍDA
 
 | Passo | Descrição | Status |
 |---|---|---|
 | 4.1 | Infra do sandbox (`Dockerfile` + `executor.py`, container efêmero + isolamento) | ✅ validado |
 | 4.2 | Tool Qwen3-Coder (`coder_client.py`, gera/corrige código via Ollama) | ✅ validado |
 | 4.3 | Loop de iteração (`agent_loop.py`, executa → erro → corrige → executa de novo) | ✅ validado |
-| 4.4 | Teste end-to-end + fechamento da fase (`test_coding_agent_e2e.py` + `__init__.py` faltantes) | ⏳ aguardando validação |
+| 4.4 | Teste end-to-end + fechamento da fase (`test_coding_agent_e2e.py` + `__init__.py` faltantes) | ✅ validado |
 
 ### Decisões tomadas até agora nesta fase
 
@@ -64,7 +64,7 @@
 - Validado empiricamente que `qwen3-coder:30b` é a tag correta no Ollama.
 - **`DEFAULT_MAX_ATTEMPTS` ajustado de 3 para 5** (mudança feita por hp após validar o 4.3 em uso real; possível revisão futura para 10, a confirmar com mais uso real, regra 5 do projeto).
 - Teste real do 4.3 confirmou o retry funcionando ponta a ponta: tarefa de leitura de CSV inexistente levou 3 tentativas até o Qwen3-Coder contornar sozinho (usando `tempfile` em vez de escrever em `/sandbox`, sem permissão de escrita sem `CAP_DAC_OVERRIDE`) — possível ajuste futuro se o sandbox precisar permitir escrita de arquivos de saída (ex: gráficos do matplotlib).
-- **Teste e2e (4.4)** usa uma tarefa que exige rede para testar de forma determinística o caminho "esgota as tentativas sem sucesso" — não depende de o modelo cooperar em falhar de um jeito específico.
+- **Teste e2e (4.4)**: a primeira versão do teste 3 (rede bloqueada) pediu só "imprimir o status code" — o Qwen3-Coder capturou a exceção de conexão com `try/except` e saiu com `exit_code=0`, contando como "sucesso" mesmo sem cumprir a tarefa de verdade (achado real em teste no hardware). Corrigido proibindo `try/except` explicitamente na instrução da tarefa, forçando o erro de rede a se propagar de verdade.
 - **Limpeza de `__init__.py`** (4.4): adicionados os que faltavam em `src/`, `src/ingestion/` e `src/retrieval/`, deixando o repo consistente com o `08_ESTRUTURA.md` (pendência identificada nas verificações do repo real ao longo da fase).
 
-(Registro formal das decisões definitivas vai para `06_DECISIONS.md` assim que a fase fechar — ver `PROCESSO_DE_TRABALHO.md`, seção 4. Preparado assim que a validação do 4.4 for confirmada.)
+**Fase 04 encerrada.** Documentos mestres (`05_ROADMAP.md`, `06_DECISIONS.md` — Decisions 031 a 035 —, `08_ESTRUTURA.md`, `04_CURRENT_STATE.md`) atualizados fora deste repositório.
