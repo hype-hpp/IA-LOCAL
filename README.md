@@ -108,7 +108,7 @@ python tests/test_searxng_client.py    # SearXNG
 
 Ver `docs/STATUS.md`.
 
-## Como usar arquivos novos que eu (Claude) te entregar
+## Como usar arquivos novos que eu te entregar
 
 Toda entrega de novos arquivos vem com um `docs/TUTORIAL.md` explicando especificamente aqueles arquivos — o que fazem e como rodar. Esse tutorial é substituído a cada passo (não acumula histórico); a referência estável de longo prazo é este README.
 
