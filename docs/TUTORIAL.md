@@ -1,4 +1,4 @@
-# Tutorial — Fase 03, Passo 3.5 (Fechamento da fase)
+# Tutorial — Fase 04, Passo 4.1 (Infra do Sandbox)
 
 Este tutorial cobre **apenas os arquivos entregues neste passo**. Não acumula
 histórico de passos anteriores (isso fica no `README.md` e no `docs/STATUS.md`).
@@ -7,38 +7,75 @@ histórico de passos anteriores (isso fica no `README.md` e no `docs/STATUS.md`)
 
 | Arquivo | Onde colocar |
 |---|---|
-| `tests/test_web_research_e2e.py` | `IA-LOCAL/tests/test_web_research_e2e.py` |
+| `sandbox/Dockerfile` | `IA-LOCAL/sandbox/Dockerfile` |
+| `scripts/build_sandbox.sh` | `IA-LOCAL/scripts/build_sandbox.sh` |
+| `src/sandbox/__init__.py` | `IA-LOCAL/src/sandbox/__init__.py` |
+| `src/sandbox/executor.py` | `IA-LOCAL/src/sandbox/executor.py` |
+| `tests/test_sandbox_executor.py` | `IA-LOCAL/tests/test_sandbox_executor.py` |
 
-Além disso, os documentos-mestre do projeto (fora do repositório Git, mantidos separadamente) foram atualizados para refletir a Fase 03 concluída: `05_ROADMAP.md`, `06_DECISIONS.md` (Decisions 026-030), `08_ESTRUTURA.md` e `04_CURRENT_STATE.md`.
+Nenhum arquivo existente foi modificado neste passo — tudo é novo.
 
 ## O que cada coisa faz
 
-- **`test_web_research_e2e.py`**: teste de integração cobrindo o pipeline inteiro da Fase 03 de ponta a ponta — multi-query (3.4) → busca no SearXNG (3.1) → fetch/extração via Crawl4AI (3.2) → montagem e indexação de evidências no `chat_scope` (3.3) — chamando as funções diretamente (não via subprocess), o que permite validar cada etapa com asserts específicos. Usa um `chat_id` isolado e limpa antes/depois, como os outros testes de integração da Fase 02/03.
+- **`sandbox/Dockerfile`**: imagem do sandbox de execução, `python:3.11-slim` +
+  `numpy`, `pandas`, `requests`, `beautifulsoup4`, `matplotlib`, `scipy`
+  pré-instalados (Decision 020). Sem `ENTRYPOINT` fixo — o comando real é
+  passado pelo `executor.py` no momento do `docker run`.
+- **`scripts/build_sandbox.sh`**: builda a imagem localmente com a tag
+  `ia-local-sandbox:latest`. Rodar de novo sempre que o Dockerfile mudar.
+- **`src/sandbox/executor.py`**: função `run_code(code, timeout=30, ...)` que
+  sobe um container **efêmero** (`docker run --rm`), roda o código recebido
+  como um script Python, e devolve um `ExecutionResult` com `stdout`,
+  `stderr`, `exit_code`, `timed_out` e `error`. Duas decisões de arquitetura
+  confirmadas com você antes de escrever este arquivo:
+  - Container novo e descartável a cada execução (não um container
+    persistente com `docker exec`).
+  - Sem rede por padrão (`--network none`).
+
+  Além disso, o executor aplica limites de memória (512m), CPU (1 core),
+  número de processos (`--pids-limit 100`), remove todas as capabilities
+  Linux (`--cap-drop ALL`) e bloqueia escalonamento de privilégio
+  (`--security-opt no-new-privileges`) — proteção padrão de sandbox, não uma
+  decisão em aberto (regra 11 do projeto). O único volume montado é um
+  diretório temporário criado e apagado pelo próprio módulo, nunca o `/home`
+  do usuário.
+
+  Erros do **código do usuário** (exceptions, exit code != 0, timeout) nunca
+  viram exceção Python — viram campos do `ExecutionResult`. Só uma falha de
+  **infraestrutura** (ex: Docker não instalado) usa o campo `error`. Isso
+  importa para o passo 4.4 (loop de iteração): o chamador só precisa checar
+  campos, sem `try/except` espalhado.
+- **`tests/test_sandbox_executor.py`**: valida código simples, código com
+  erro, bloqueio de rede, timeout, uso de pacote pré-instalado, e limpeza do
+  diretório temporário.
 
 ## Como testar
 
 ```bash
-cd ~/IA-LOCAL
-python tests/test_web_research_e2e.py
-```
+# 1. Colocar os arquivos nos caminhos da tabela acima
 
-Precisa de SearXNG, Ollama (embedding + GPT-OSS) e Qdrant todos no ar — é o teste mais "pesado" da Fase 03, roda o fluxo real completo.
+# 2. Buildar a imagem do sandbox
+chmod +x scripts/build_sandbox.sh
+./scripts/build_sandbox.sh
+
+# 3. Teste manual rápido (smoke test do próprio módulo)
+python src/sandbox/executor.py
+
+# 4. Rodar o teste completo
+python tests/test_sandbox_executor.py
+```
 
 ## Checklist de validação
 
-- [ ] `test_web_research_e2e.py` termina com `Pipeline completo da Fase 03 validado de ponta a ponta.`
-- [ ] Nenhum dado de teste sobra no `chat_scope` depois (o `cleanup()` roda no início e no fim)
+- [ ] `./scripts/build_sandbox.sh` builda sem erro e a imagem aparece em `docker images`
+- [ ] `python src/sandbox/executor.py` imprime `success=True` e o stdout esperado
+- [ ] `python tests/test_sandbox_executor.py` termina com `Todos os testes do executor do sandbox passaram.`
+- [ ] Depois de rodar os testes, ` ` não mostra containers órfãos do sandbox (o `--rm` deve limpar tudo sozinho)
+- [ ] Nenhum diretório `ia_local_sandbox_*` sobra em `/tmp` depois dos testes
 
-## Fase 03 — Resumo do que foi entregue
+## Próximo passo (4.2)
 
-| Passo | Entrega |
-|---|---|
-| 3.1 | SearXNG (infra) + `searxng_client.py` |
-| 3.2 | `page_fetcher.py` (fetch + extração via Crawl4AI) |
-| 3.3 | `evidence.py` + `web_research.py` (dedup, chunking, inserção no chat_scope) |
-| 3.4 | `query_expansion.py` + `multi_query.py` (multi-query via GPT-OSS) |
-| 3.5 | `test_web_research_e2e.py` + fechamento da documentação |
-
-## Próxima fase
-
-Fase 04 — Coding Agent + Sandbox (Qwen3-Coder como Tool + Docker sandbox), conforme `05_ROADMAP.md`. Me avisa quando quiser começar que a gente aplica o mesmo processo de mini-passos.
+Com o executor validado, o passo 4.2 cobre a integração do Qwen3-Coder como
+tool do orquestrador (mesmo padrão da Decision 016/025): uma função que
+recebe uma tarefa em linguagem natural e devolve código gerado, pronto para
+ser passado ao `run_code()` deste passo.

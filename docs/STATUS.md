@@ -25,7 +25,7 @@
 
 ---
 
-## Fase 03 (Web Search + Browser) — EM ANDAMENTO
+## Fase 03 (Web Search + Browser) — CONCLUÍDA
 
 | Passo | Descrição | Status |
 |---|---|---|
@@ -35,10 +35,28 @@
 | 3.4 | Multi-query via GPT-OSS (`query_expansion.py` + `multi_query.py`) | ✅ validado |
 | 3.5 | Teste de integração end-to-end + fechamento da fase | ✅ validado |
 
-**Fase 03 CONCLUÍDA.**
-
-### Decisões-chave desta fase (confirmadas até agora)
+### Decisões-chave desta fase
 
 - Extração de conteúdo via **Crawl4AI** (já usa Playwright por baixo e entrega markdown limpo, evita montar Playwright + lib de extração separada).
 - Evidências de pesquisa web vão para **chat_scope** por padrão (temporário, promovível via `/save`).
 - Multi-query entra já na Fase 03, via GPT-OSS gerando variações da query (reaproveita o padrão de "worker" já usado no reranker).
+
+---
+
+## Fase 04 (Coding Agent + Sandbox) — EM ANDAMENTO
+
+| Passo | Descrição | Status |
+|---|---|---|
+| 4.1 | Infra do sandbox (`Dockerfile` + `executor.py`, container efêmero + isolamento) | ⏳ aguardando validação |
+| 4.2 | Tool Qwen3-Coder (gera código a partir de tarefa em linguagem natural) | pendente |
+| 4.3 | Isolamento de rede/recursos (revisão fina após uso real) | pendente |
+| 4.4 | Loop de iteração (executa → erro → corrige → executa de novo, com limite) | pendente |
+| 4.5 | Teste end-to-end + fechamento da fase | pendente |
+
+### Decisões tomadas até agora nesta fase
+
+- Container **efêmero** por execução (`docker run --rm`), não container persistente com `docker exec` — prioriza isolamento sobre latência de cold start.
+- **Sem rede por padrão** (`--network none`) no sandbox — reduz superfície de risco de código não confiável; revisável se algum caso real precisar de rede (regra 5 do projeto).
+- Limites de memória/CPU/pids + `--cap-drop ALL` + `--security-opt no-new-privileges` como proteção padrão de sandbox (regra 11 do projeto), não como decisão em aberto.
+
+(Registro formal dessas decisões vai para `06_DECISIONS.md` quando a fase fechar — ver `PROCESSO_DE_TRABALHO.md`, seção 4.)
