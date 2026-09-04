@@ -48,8 +48,8 @@
 | Passo | Descrição | Status |
 |---|---|---|
 | 4.1 | Infra do sandbox (`Dockerfile` + `executor.py`, container efêmero + isolamento) | ✅ validado |
-| 4.2 | Tool Qwen3-Coder (`coder_client.py`, gera/corrige código via Ollama) | ⏳ aguardando validação |
-| 4.3 | Loop de iteração (executa → erro → corrige → executa de novo, com limite) | pendente |
+| 4.2 | Tool Qwen3-Coder (`coder_client.py`, gera/corrige código via Ollama) | ✅ validado |
+| 4.3 | Loop de iteração (`agent_loop.py`, executa → erro → corrige → executa de novo) | ⏳ aguardando validação |
 | 4.4 | Teste end-to-end + fechamento da fase | pendente |
 
 ### Decisões tomadas até agora nesta fase
@@ -57,12 +57,10 @@
 - Container **efêmero** por execução (`docker run --rm`), não container persistente com `docker exec` — prioriza isolamento sobre latência de cold start.
 - **Sem rede por padrão** (`--network none`) no sandbox — reduz superfície de risco de código não confiável; revisável se algum caso real precisar de rede (regra 5 do projeto).
 - Limites de memória/CPU/pids + `--cap-drop ALL` + `--security-opt no-new-privileges` como proteção padrão de sandbox (regra 11 do projeto), não como decisão em aberto.
-- **Bug corrigido (4.1)**: `--cap-drop ALL` remove `CAP_DAC_OVERRIDE`, então o root dentro do container não conseguia ler o script montado (dono do host, permissão `0700`). Corrigido relaxando a permissão do diretório/arquivo temporário antes do `docker run` (`0755`/`0644`) — seguro por serem artefatos efêmeros sem dado sensível.
-- **Geração de código sem JSON Schema forçado** (4.2): ao contrário do reranker/query-expansion, o Qwen3-Coder responde em um bloco ```` ```python ```` cercado, extraído via regex — evitar o custo de escapar código inteiro dentro de uma string JSON.
-- `generate_code()` cobre geração nova E correção (via `previous_code`/`error` opcionais) na mesma função, para o loop de iteração do 4.3 reaproveitar sem duplicar lógica de prompt.
-
-### Pendente de confirmação no hardware real
-
-- Tag exata do modelo Qwen3-Coder no Ollama (assumido `qwen3-coder:30b` por convenção, igual ao `qwen3-embedding:4b` — ainda não validado empiricamente como foi feito na Fase 02).
+- **Bug corrigido (4.1)**: `--cap-drop ALL` remove `CAP_DAC_OVERRIDE`, então o root dentro do container não conseguia ler o script montado (dono do host, permissão `0700`). Corrigido relaxando a permissão do diretório/arquivo temporário antes do `docker run` (`0755`/`0644`).
+- **Geração de código sem JSON Schema forçado** (4.2): ao contrário do reranker/query-expansion, o Qwen3-Coder responde em um bloco ```` ```python ```` cercado, extraído via regex.
+- `generate_code()` cobre geração nova E correção (via `previous_code`/`error` opcionais) na mesma função — o loop de iteração (4.3) reaproveita sem duplicar lógica de prompt.
+- **Loop de iteração (4.3)**: `CoderError` na geração (falha de infraestrutura) interrompe o loop imediatamente, sem contar como tentativa — diferente de uma execução que falhou por erro no código, que é elegível a correção automática.
+- Validado empiricamente que `qwen3-coder:30b` é a tag correta no Ollama (confirmado no passo 4.2, ao contrário do que estava marcado como pendente).
 
 (Registro formal das decisões definitivas vai para `06_DECISIONS.md` quando a fase fechar — ver `PROCESSO_DE_TRABALHO.md`, seção 4.)

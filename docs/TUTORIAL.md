@@ -1,4 +1,4 @@
-# Tutorial — Fase 04, Passo 4.2 (Tool Qwen3-Coder)
+# Tutorial — Fase 04, Passo 4.3 (Loop de Iteração)
 
 Cobre apenas os arquivos deste passo. Histórico completo fica no `README.md`
 e no `docs/STATUS.md`.
@@ -7,80 +7,72 @@ e no `docs/STATUS.md`.
 
 | Arquivo | Onde colocar |
 |---|---|
-| `src/coding/__init__.py` | `IA-LOCAL/src/coding/__init__.py` |
-| `src/coding/coder_client.py` | `IA-LOCAL/src/coding/coder_client.py` |
-| `tests/test_coder_client_parsing.py` | `IA-LOCAL/tests/test_coder_client_parsing.py` |
-| `scripts/generate_code.py` | `IA-LOCAL/scripts/generate_code.py` |
+| `src/coding/agent_loop.py` | `IA-LOCAL/src/coding/agent_loop.py` |
+| `tests/test_agent_loop.py` | `IA-LOCAL/tests/test_agent_loop.py` |
+| `scripts/solve_task.py` | `IA-LOCAL/scripts/solve_task.py` |
 
-Nada do passo 4.1 foi modificado.
+Nada dos passos 4.1/4.2 foi modificado.
 
 ## O que cada coisa faz
 
-- **`src/coding/coder_client.py`**: função `generate_code(task, previous_code=None, error=None)`
-  que chama o Qwen3-Coder via Ollama e devolve código Python pronto (string).
-  Mesma função cobre os dois casos de uso, via prompt diferente conforme os
-  parâmetros:
-  - Só `task` → gera código novo.
-  - `task` + `previous_code` + `error` → pede correção do código anterior
-    (é isso que o passo 4.3, o loop de iteração, vai chamar a cada retry).
+- **`src/coding/agent_loop.py`**: função `solve_task(task, max_attempts=3)` que
+  fecha o ciclo completo da Fase 04:
+  1. `generate_code(task)` (4.2) → código
+  2. `run_code(código)` no sandbox (4.1)
+  3. Sucesso → retorna.
+  4. Falha → `generate_code(task, previous_code=código, error=stderr)` (modo
+     correção) → volta pro passo 2, até `max_attempts` tentativas.
 
-  Decisão tomada neste passo: ao contrário do reranker (Decision 025) e do
-  query expansion (Decision 028), aqui **não** se usa grammar-constrained
-  JSON Schema — pede-se um bloco de código cercado por ```` ```python ```` e
-  extrai-se via regex (`extract_code()`). Forçar código inteiro dentro de uma
-  string JSON só adicionaria complexidade de escaping sem benefício real.
+  Não teve decisão de arquitetura nova neste passo — é só orquestração dos
+  dois módulos já validados, sem duplicar lógica de prompt ou de execução.
 
-  Erros de infraestrutura (rede, resposta sem código extraível) levantam
-  `CoderError` — diferente do `executor.py` da 4.1, aqui faz sentido
-  interromper com exceção, já que não tem o que rodar no sandbox se a
-  geração falhou.
+  Um detalhe que vale destacar: erro de **infraestrutura na geração**
+  (`CoderError`, ex: Ollama fora do ar) não é tratado como "tentativa que
+  falhou e pode ser corrigida" — não faz sentido pedir pro modelo corrigir
+  um código que nem chegou a ser gerado. Nesse caso o loop para na hora,
+  com `attempts_used=0`, pra quem chama conseguir distinguir "o código
+  gerado não funcionou" de "não deu nem pra gerar código".
 
-  **Atenção**: a tag do modelo está como `qwen3-coder:30b` (mesmo padrão de
-  nomenclatura do `qwen3-embedding:4b`), mas isso ainda não foi confirmado
-  no seu Ollama — rode `ollama list` (ou `ollama pull qwen3-coder:30b` se
-  ainda não tiver puxado) e ajuste a env var `CODER_MODEL` se a tag real for
-  diferente.
+- **`tests/test_agent_loop.py`**: testa só o **controle do loop**, com
+  `generate_code()` e `run_code()` substituídos por versões falsas
+  (monkeypatch simples, sem lib externa) — não chama Ollama nem Docker de
+  verdade. Cobre: sucesso na 1ª tentativa, falha→falha→sucesso na 3ª
+  (confirmando que o erro certo é repassado a cada retry), sempre falha até
+  esgotar `max_attempts`, e `CoderError` na geração interrompendo o loop
+  sem tentar executar nada.
 
-- **`tests/test_coder_client_parsing.py`**: testa `extract_code()` e
-  `build_prompt()` sem precisar de rede nem do Ollama — cobre bloco cercado
-  com/sem tag de linguagem, resposta sem cerca nenhuma (fallback), múltiplos
-  blocos (extrai só o primeiro), resposta vazia, e os dois modos do prompt
-  (geração nova vs. correção).
-
-- **`scripts/generate_code.py`**: CLI manual para testar de ponta a ponta
-  contra o Ollama real. Com `--run`, já executa o código gerado no sandbox
-  da 4.1 e mostra o resultado — bom teste de fumaça do encadeamento
-  Qwen3-Coder → executor, antes de montar o loop de iteração automática.
+- **`scripts/solve_task.py`**: CLI para rodar o loop completo de verdade
+  (Ollama + Docker reais), mostrando cada tentativa, o código gerado, e se
+  no final resolveu ou esgotou as tentativas.
 
 ## Como testar
 
 ```bash
 # 1. Colocar os arquivos nos caminhos da tabela acima
 
-# 2. Teste de parsing (rápido, sem rede)
-python tests/test_coder_client_parsing.py
+# 2. Teste de controle do loop (rápido, sem rede, sem Docker)
+python tests/test_agent_loop.py
 
-# 3. Confirmar a tag do modelo no Ollama
-ollama list | grep -i coder
-# se a tag real não for qwen3-coder:30b, exporte:
-# export CODER_MODEL="tag-real-aqui"
+# 3. Teste real, tarefa simples que deve resolver de primeira
+python scripts/solve_task.py "somar os 10 primeiros números pares"
 
-# 4. Teste real de geração (precisa do Ollama rodando com o modelo puxado)
-python scripts/generate_code.py "somar os 10 primeiros números pares"
-
-# 5. Teste real de geração + execução no sandbox
-python scripts/generate_code.py "somar os 10 primeiros números pares" --run
+# 4. Teste real forçando correção — peça algo ambíguo o suficiente pra
+#    aumentar a chance do modelo errar na 1a tentativa e você ver o
+#    retry acontecer
+python scripts/solve_task.py "ler um arquivo chamado dados.csv e imprimir a soma da coluna 'valor'" --max-attempts 3
 ```
 
 ## Checklist de validação
 
-- [ ] `python tests/test_coder_client_parsing.py` termina com "Todos os testes de parsing do coder_client passaram."
-- [ ] Tag do modelo confirmada via `ollama list` (ajustada via `CODER_MODEL` se necessário)
-- [ ] `python scripts/generate_code.py "..."` devolve um bloco de código Python coerente com a tarefa
-- [ ] `python scripts/generate_code.py "..." --run` executa o código gerado no sandbox e mostra `success=True` (para uma tarefa simples o suficiente)
+- [ ] `python tests/test_agent_loop.py` termina com "Todos os testes do agent_loop passaram."
+- [ ] `python scripts/solve_task.py "..."` resolve uma tarefa simples em 1 tentativa
+- [ ] Alguma tarefa (pode forçar com algo mais complicado) mostra pelo menos 2 tentativas no output, confirmando que o retry com correção está funcionando de verdade
+- [ ] Uma tarefa proposital-mente impossível (ex: "leia um arquivo que não existe e imprima seu conteúdo") esgota as `max_attempts` e termina com `[falhou]`, sem travar nem lançar exceção não tratada
 
-## Próximo passo (4.3)
+## Próximo passo (4.4 — fechamento da fase)
 
-Loop de iteração: executa o código gerado → se `success=False`, manda
-`code` + `result.stderr` de volta pro `generate_code()` (modo correção) →
-executa de novo → repete até sucesso ou até um número máximo de tentativas.
+Teste de integração end-to-end da Fase 04 completa, atualização do
+`05_ROADMAP.md`, registro das Decisions novas em `06_DECISIONS.md`,
+atualização do `08_ESTRUTURA.md` e `04_CURRENT_STATE.md` — e aproveitar pra
+limpar os `__init__.py` que ainda faltam em `src/`, `src/ingestion/` e
+`src/retrieval/` (pendência apontada na verificação do repo real).
