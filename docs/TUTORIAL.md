@@ -1,81 +1,86 @@
-# Tutorial — Fase 04, Passo 4.1 (Infra do Sandbox)
+# Tutorial — Fase 04, Passo 4.2 (Tool Qwen3-Coder)
 
-Este tutorial cobre **apenas os arquivos entregues neste passo**. Não acumula
-histórico de passos anteriores (isso fica no `README.md` e no `docs/STATUS.md`).
+Cobre apenas os arquivos deste passo. Histórico completo fica no `README.md`
+e no `docs/STATUS.md`.
 
 ## O que foi entregue
 
 | Arquivo | Onde colocar |
 |---|---|
-| `sandbox/Dockerfile` | `IA-LOCAL/sandbox/Dockerfile` |
-| `scripts/build_sandbox.sh` | `IA-LOCAL/scripts/build_sandbox.sh` |
-| `src/sandbox/__init__.py` | `IA-LOCAL/src/sandbox/__init__.py` |
-| `src/sandbox/executor.py` | `IA-LOCAL/src/sandbox/executor.py` |
-| `tests/test_sandbox_executor.py` | `IA-LOCAL/tests/test_sandbox_executor.py` |
+| `src/coding/__init__.py` | `IA-LOCAL/src/coding/__init__.py` |
+| `src/coding/coder_client.py` | `IA-LOCAL/src/coding/coder_client.py` |
+| `tests/test_coder_client_parsing.py` | `IA-LOCAL/tests/test_coder_client_parsing.py` |
+| `scripts/generate_code.py` | `IA-LOCAL/scripts/generate_code.py` |
 
-Nenhum arquivo existente foi modificado neste passo — tudo é novo.
+Nada do passo 4.1 foi modificado.
 
 ## O que cada coisa faz
 
-- **`sandbox/Dockerfile`**: imagem do sandbox de execução, `python:3.11-slim` +
-  `numpy`, `pandas`, `requests`, `beautifulsoup4`, `matplotlib`, `scipy`
-  pré-instalados (Decision 020). Sem `ENTRYPOINT` fixo — o comando real é
-  passado pelo `executor.py` no momento do `docker run`.
-- **`scripts/build_sandbox.sh`**: builda a imagem localmente com a tag
-  `ia-local-sandbox:latest`. Rodar de novo sempre que o Dockerfile mudar.
-- **`src/sandbox/executor.py`**: função `run_code(code, timeout=30, ...)` que
-  sobe um container **efêmero** (`docker run --rm`), roda o código recebido
-  como um script Python, e devolve um `ExecutionResult` com `stdout`,
-  `stderr`, `exit_code`, `timed_out` e `error`. Duas decisões de arquitetura
-  confirmadas com você antes de escrever este arquivo:
-  - Container novo e descartável a cada execução (não um container
-    persistente com `docker exec`).
-  - Sem rede por padrão (`--network none`).
+- **`src/coding/coder_client.py`**: função `generate_code(task, previous_code=None, error=None)`
+  que chama o Qwen3-Coder via Ollama e devolve código Python pronto (string).
+  Mesma função cobre os dois casos de uso, via prompt diferente conforme os
+  parâmetros:
+  - Só `task` → gera código novo.
+  - `task` + `previous_code` + `error` → pede correção do código anterior
+    (é isso que o passo 4.3, o loop de iteração, vai chamar a cada retry).
 
-  Além disso, o executor aplica limites de memória (512m), CPU (1 core),
-  número de processos (`--pids-limit 100`), remove todas as capabilities
-  Linux (`--cap-drop ALL`) e bloqueia escalonamento de privilégio
-  (`--security-opt no-new-privileges`) — proteção padrão de sandbox, não uma
-  decisão em aberto (regra 11 do projeto). O único volume montado é um
-  diretório temporário criado e apagado pelo próprio módulo, nunca o `/home`
-  do usuário.
+  Decisão tomada neste passo: ao contrário do reranker (Decision 025) e do
+  query expansion (Decision 028), aqui **não** se usa grammar-constrained
+  JSON Schema — pede-se um bloco de código cercado por ```` ```python ```` e
+  extrai-se via regex (`extract_code()`). Forçar código inteiro dentro de uma
+  string JSON só adicionaria complexidade de escaping sem benefício real.
 
-  Erros do **código do usuário** (exceptions, exit code != 0, timeout) nunca
-  viram exceção Python — viram campos do `ExecutionResult`. Só uma falha de
-  **infraestrutura** (ex: Docker não instalado) usa o campo `error`. Isso
-  importa para o passo 4.4 (loop de iteração): o chamador só precisa checar
-  campos, sem `try/except` espalhado.
-- **`tests/test_sandbox_executor.py`**: valida código simples, código com
-  erro, bloqueio de rede, timeout, uso de pacote pré-instalado, e limpeza do
-  diretório temporário.
+  Erros de infraestrutura (rede, resposta sem código extraível) levantam
+  `CoderError` — diferente do `executor.py` da 4.1, aqui faz sentido
+  interromper com exceção, já que não tem o que rodar no sandbox se a
+  geração falhou.
+
+  **Atenção**: a tag do modelo está como `qwen3-coder:30b` (mesmo padrão de
+  nomenclatura do `qwen3-embedding:4b`), mas isso ainda não foi confirmado
+  no seu Ollama — rode `ollama list` (ou `ollama pull qwen3-coder:30b` se
+  ainda não tiver puxado) e ajuste a env var `CODER_MODEL` se a tag real for
+  diferente.
+
+- **`tests/test_coder_client_parsing.py`**: testa `extract_code()` e
+  `build_prompt()` sem precisar de rede nem do Ollama — cobre bloco cercado
+  com/sem tag de linguagem, resposta sem cerca nenhuma (fallback), múltiplos
+  blocos (extrai só o primeiro), resposta vazia, e os dois modos do prompt
+  (geração nova vs. correção).
+
+- **`scripts/generate_code.py`**: CLI manual para testar de ponta a ponta
+  contra o Ollama real. Com `--run`, já executa o código gerado no sandbox
+  da 4.1 e mostra o resultado — bom teste de fumaça do encadeamento
+  Qwen3-Coder → executor, antes de montar o loop de iteração automática.
 
 ## Como testar
 
 ```bash
 # 1. Colocar os arquivos nos caminhos da tabela acima
 
-# 2. Buildar a imagem do sandbox
-chmod +x scripts/build_sandbox.sh
-./scripts/build_sandbox.sh
+# 2. Teste de parsing (rápido, sem rede)
+python tests/test_coder_client_parsing.py
 
-# 3. Teste manual rápido (smoke test do próprio módulo)
-python src/sandbox/executor.py
+# 3. Confirmar a tag do modelo no Ollama
+ollama list | grep -i coder
+# se a tag real não for qwen3-coder:30b, exporte:
+# export CODER_MODEL="tag-real-aqui"
 
-# 4. Rodar o teste completo
-python tests/test_sandbox_executor.py
+# 4. Teste real de geração (precisa do Ollama rodando com o modelo puxado)
+python scripts/generate_code.py "somar os 10 primeiros números pares"
+
+# 5. Teste real de geração + execução no sandbox
+python scripts/generate_code.py "somar os 10 primeiros números pares" --run
 ```
 
 ## Checklist de validação
 
-- [ ] `./scripts/build_sandbox.sh` builda sem erro e a imagem aparece em `docker images`
-- [ ] `python src/sandbox/executor.py` imprime `success=True` e o stdout esperado
-- [ ] `python tests/test_sandbox_executor.py` termina com `Todos os testes do executor do sandbox passaram.`
-- [ ] Depois de rodar os testes, ` ` não mostra containers órfãos do sandbox (o `--rm` deve limpar tudo sozinho)
-- [ ] Nenhum diretório `ia_local_sandbox_*` sobra em `/tmp` depois dos testes
+- [ ] `python tests/test_coder_client_parsing.py` termina com "Todos os testes de parsing do coder_client passaram."
+- [ ] Tag do modelo confirmada via `ollama list` (ajustada via `CODER_MODEL` se necessário)
+- [ ] `python scripts/generate_code.py "..."` devolve um bloco de código Python coerente com a tarefa
+- [ ] `python scripts/generate_code.py "..." --run` executa o código gerado no sandbox e mostra `success=True` (para uma tarefa simples o suficiente)
 
-## Próximo passo (4.2)
+## Próximo passo (4.3)
 
-Com o executor validado, o passo 4.2 cobre a integração do Qwen3-Coder como
-tool do orquestrador (mesmo padrão da Decision 016/025): uma função que
-recebe uma tarefa em linguagem natural e devolve código gerado, pronto para
-ser passado ao `run_code()` deste passo.
+Loop de iteração: executa o código gerado → se `success=False`, manda
+`code` + `result.stderr` de volta pro `generate_code()` (modo correção) →
+executa de novo → repete até sucesso ou até um número máximo de tentativas.
