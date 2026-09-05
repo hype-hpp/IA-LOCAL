@@ -68,3 +68,26 @@
 - **Limpeza de `__init__.py`** (4.4): adicionados os que faltavam em `src/`, `src/ingestion/` e `src/retrieval/`, deixando o repo consistente com o `08_ESTRUTURA.md` (pendência identificada nas verificações do repo real ao longo da fase).
 
 **Fase 04 encerrada.** Documentos mestres (`05_ROADMAP.md`, `06_DECISIONS.md` — Decisions 031 a 035 —, `08_ESTRUTURA.md`, `04_CURRENT_STATE.md`) atualizados fora deste repositório.
+
+---
+
+## Fase 05 (Memory) — EM ANDAMENTO
+
+| Passo | Descrição | Status |
+|---|---|---|
+| 5.1 | Fundação: schema de memória em `global_scope` (`src/memory/schema.py`) | ✅ validado (teste sem rede) — pendente rodar `create_collections.py` + `ingest_document.py` no hardware real |
+| 5.2 | Mecanismo `/save` (promoção `chat_scope` → `global_scope`) | ⏳ pendente |
+| 5.3 | Memória manual avulsa (nota livre direto em `global_scope`) | ⏳ pendente |
+| 5.4 | Visualizar / editar / apagar memórias (regra 10 do projeto) | ⏳ pendente |
+| 5.5 | Teste end-to-end + fechamento da fase | ⏳ pendente |
+
+### Decisões tomadas até agora nesta fase
+
+- **Metadata de memória só no payload do Qdrant**, sem componente novo (ex: PostgreSQL, que a Decision 004 previa para dados estruturados em geral) — decisão de hp, revisável se isso se mostrar insuficiente com uso real (regra 5 do projeto).
+- **Interface continua CLI** nesta fase, não a UI Gradio/Streamlit prevista na Decision 019 — decisão de hp.
+- **"Memória de conversa" fora do escopo mínimo da Fase 05** — decisão de hp: não existe Agent Core/loop de chat real ainda (só na Fase 07), então não faz sentido construir memória de conversa sem uma conversa de verdade acontecendo. Fase 05 foca em `/save` + memória semântica (`knowledge`) + memória de pesquisa (`research`) + nota manual avulsa (`manual`).
+- **Três tipos de memória** definidos em `global_scope` via campo `memory_type`: `knowledge` (documento ingerido, Fase 02), `research` (evidência promovida via `/save`, 5.2), `manual` (nota livre, 5.3) — todos com o mesmo formato-base de payload (`src/memory/schema.py`), para poderem ser listados/filtrados de forma uniforme no passo 5.4.
+- **Campo `ingested_at` renomeado para `saved_at`** em `ingest_document.py` (Fase 02), para ficar com o mesmo nome usado pelos outros dois tipos de memória. Sem dado real a migrar (nenhum documento indexado ainda no projeto).
+- **`create_collections.py` deixou de pular a criação de índice** quando a collection já existe — agora índice é etapa separada e idempotente, permitindo adicionar `memory_type` (novo, só em `global_scope`) numa instalação já em uso.
+
+**Fase 05 em andamento.** `06_DECISIONS.md` e `05_ROADMAP.md` do projeto principal ainda não foram atualizados com decisões formais numeradas — isso deve acontecer no fechamento da fase (passo 5.5), quando o conjunto final de decisões estiver estável.
