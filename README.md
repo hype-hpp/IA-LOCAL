@@ -147,14 +147,6 @@ python tests/test_sandbox_executor.py    # Docker
 python tests/test_coding_agent_e2e.py    # Ollama + Docker
 ```
 
-## 📖 Documentação
-
-- [`docs/STATUS.md`](docs/STATUS.md) — progresso detalhado por passo/fase
-- [`docs/TUTORIAL.md`](docs/TUTORIAL.md) — tutorial do último passo entregue (não acumula histórico)
-
-## Como usar arquivos novos que eu te entregar
-> Toda entrega de arquivos novos vem com um `docs/TUTORIAL.md` explicando especificamente aqueles arquivos. O caminho do arquivo no card de download é o mesmo caminho dentro de `IA-LOCAL/` — se o arquivo já existe, apague o antigo antes de copiar o novo.
-
 ## ⚙️ Princípios do projeto
 
 - **Local-first**: cloud é fallback opcional, nunca requisito.
