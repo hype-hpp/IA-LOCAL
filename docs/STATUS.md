@@ -76,7 +76,7 @@
 | Passo | Descrição | Status |
 |---|---|---|
 | 5.1 | Fundação: schema de memória em `global_scope` (`src/memory/schema.py`) | ✅ validado (teste sem rede) — pendente rodar `create_collections.py` + `ingest_document.py` no hardware real |
-| 5.2 | Mecanismo `/save` (promoção `chat_scope` → `global_scope`) | ⏳ pendente |
+| 5.2 | Mecanismo `/save` (`src/memory/save.py` + `scripts/save_memory.py`) | ✅ validado (6 testes com Qdrant fake) — pendente teste real de promoção no hardware |
 | 5.3 | Memória manual avulsa (nota livre direto em `global_scope`) | ⏳ pendente |
 | 5.4 | Visualizar / editar / apagar memórias (regra 10 do projeto) | ⏳ pendente |
 | 5.5 | Teste end-to-end + fechamento da fase | ⏳ pendente |
@@ -88,6 +88,12 @@
 - **"Memória de conversa" fora do escopo mínimo da Fase 05** — decisão de hp: não existe Agent Core/loop de chat real ainda (só na Fase 07), então não faz sentido construir memória de conversa sem uma conversa de verdade acontecendo. Fase 05 foca em `/save` + memória semântica (`knowledge`) + memória de pesquisa (`research`) + nota manual avulsa (`manual`).
 - **Três tipos de memória** definidos em `global_scope` via campo `memory_type`: `knowledge` (documento ingerido, Fase 02), `research` (evidência promovida via `/save`, 5.2), `manual` (nota livre, 5.3) — todos com o mesmo formato-base de payload (`src/memory/schema.py`), para poderem ser listados/filtrados de forma uniforme no passo 5.4.
 - **Campo `ingested_at` renomeado para `saved_at`** em `ingest_document.py` (Fase 02), para ficar com o mesmo nome usado pelos outros dois tipos de memória. Sem dado real a migrar (nenhum documento indexado ainda no projeto).
-- **`create_collections.py` deixou de pular a criação de índice** quando a collection já existe — agora índice é etapa separada e idempotente, permitindo adicionar `memory_type` (novo, só em `global_scope`) numa instalação já em uso.
+- **`create_collections.py` deixou de pular a criação de índice** quando a collection já existe — agora índice é etapa separada, permitindo adicionar `memory_type` (novo, só em `global_scope`) numa instalação já em uso.
+- **Bug de log corrigido (5.1, achado em teste real no hardware)**: a primeira versão do script assumia que `client.create_payload_index()` levantaria exceção se o índice já existisse, e usava isso para decidir entre imprimir `[ok] criado` ou `[skip] já existe`. Na prática, o Qdrant trata essa chamada como idempotente no servidor — nunca levanta exceção, sempre retorna sucesso — então o script sempre imprimia `[ok] criado`, mesmo rodando pela terceira vez seguida sem nada nunca para criar (nada quebrou, o índice não duplicou; só o log mentia). Corrigido checando o `payload_schema` da collection antes de decidir se precisa criar o índice, em vez de confiar em exceção.
+- **Seleção explícita no `/save` (5.2)**: `chat_id` + lista de IDs específicos (`--ids`) — decisão de hp de não ter modo "promover tudo do chat de uma vez". `/save` é curadoria deliberada, não dump em massa.
+- **Cópia, não move (5.2)**: o ponto original permanece em `chat_scope` depois de promovido — decisão de hp. Só some quando o chat inteiro for apagado (comportamento padrão do escopo temporário).
+- **Reaproveitamento de vetor (5.2)**: a promoção usa o vetor já existente no ponto do `chat_scope` (`with_vectors=True`), sem reembeddar via Ollama — mesmo conteúdo, mesmo vetor, sem chamada nova ao modelo.
+- **`is_already_saved()` centralizada em `schema.py` (5.2)**: mesma lógica de dedup por hash usada desde a Fase 02, agora compartilhada entre `/save` (5.2) e a nota manual que vem no 5.3, em vez de duplicar a consulta pela terceira vez. `ingest_document.py` manteve sua própria função local equivalente sem alteração, para não mexer de novo num arquivo já validado sem necessidade real.
+- **`save_memory()` recebe o client já conectado**, em vez de abrir a conexão sozinha — permite testar a lógica de seleção/dedup com um Qdrant fake em memória (`tests/test_save_memory.py`), sem precisar de Qdrant real. Mesmo padrão de fakes já usado em `tests/test_agent_loop.py` (Fase 04).
 
 **Fase 05 em andamento.** `06_DECISIONS.md` e `05_ROADMAP.md` do projeto principal ainda não foram atualizados com decisões formais numeradas — isso deve acontecer no fechamento da fase (passo 5.5), quando o conjunto final de decisões estiver estável.

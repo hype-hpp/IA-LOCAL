@@ -34,6 +34,9 @@ pontual de payload seria necessária antes de confiar em buscas por
 import uuid
 from datetime import datetime, timezone
 
+from qdrant_client import QdrantClient
+from qdrant_client.models import Filter, FieldCondition, MatchValue
+
 MEMORY_TYPES = {"knowledge", "research", "manual"}
 
 
@@ -97,3 +100,30 @@ def build_memory_payload(
         payload.update(extra)
 
     return payload
+
+
+def is_already_saved(client: QdrantClient, content_hash: str, collection: str = "global_scope") -> bool:
+    """
+    Verifica se já existe uma memória com esse content_hash na collection
+    indicada (por padrão, global_scope).
+
+    Mesma lógica de dedup por hash já usada em scripts/ingest_document.py
+    desde a Fase 02 (Decision 023). Centralizada aqui na Fase 05 (5.2)
+    porque passa a ser reaproveitada em mais de um lugar: /save (5.2) e a
+    nota manual avulsa (5.3, próxima entrega) — regra 2 do projeto (não
+    duplicar a mesma consulta em três arquivos diferentes).
+
+    Nota: `scripts/ingest_document.py` mantém sua própria função local
+    `already_indexed()` sem alteração — mesmo efeito, não foi refatorado
+    para usar esta aqui para não mexer de novo num arquivo já validado no
+    5.1 sem necessidade real (regra 1). Se fizer sentido unificar os dois
+    no futuro, é um cleanup pontual, não bloqueante.
+    """
+    result, _ = client.scroll(
+        collection_name=collection,
+        scroll_filter=Filter(
+            must=[FieldCondition(key="content_hash", match=MatchValue(value=content_hash))]
+        ),
+        limit=1,
+    )
+    return len(result) > 0
