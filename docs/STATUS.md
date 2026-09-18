@@ -77,8 +77,8 @@
 |---|---|---|
 | 5.1 | Fundação: schema de memória em `global_scope` (`src/memory/schema.py`) | ✅ validado (teste sem rede) — pendente rodar `create_collections.py` + `ingest_document.py` no hardware real |
 | 5.2 | Mecanismo `/save` (`src/memory/save.py` + `scripts/save_memory.py`) | ✅ validado (6 testes fake + promoção real no hardware, confirmado no repo via tarball) |
-| 5.3 | Memória manual avulsa (`src/memory/add_note.py` + `scripts/add_memory.py`) | ✅ validado (3 testes com fake/monkeypatch) — pendente teste real no hardware |
-| 5.4 | Visualizar / editar / apagar memórias (regra 10 do projeto) | ⏳ pendente |
+| 5.3 | Memória manual avulsa (`src/memory/add_note.py` + `scripts/add_memory.py`) | ✅ validado (3 testes fake + salvamento/dedup real no hardware, confirmado no repo via tarball) |
+| 5.4 | Visualizar/editar/apagar memórias (`src/memory/manage.py` + `scripts/list_memories.py`/`edit_memory.py`/`delete_memory.py`) | ✅ validado (12 testes com Qdrant fake) — pendente teste real no hardware |
 | 5.5 | Teste end-to-end + fechamento da fase | ⏳ pendente |
 
 ### Decisões tomadas até agora nesta fase
@@ -99,5 +99,12 @@
 - **Nota manual avulsa (5.3)**: texto chega direto por `--text` (sem editor externo); `source` fixo em `"manual"` para todo ponto deste tipo, sem rótulo por nota — categorização fica por conta das `tags`, já suportadas desde o schema do 5.1.
 - **Dedup evita chamada de embedding à toa (5.3)**: `add_note()` checa `is_already_saved()` (mesma função do 5.2) ANTES de chamar `embed_text()` — se a nota já existe, nem gasta uma chamada ao Ollama para um conteúdo que seria descartado de qualquer forma.
 - **`embed_text` importado no nível do módulo em `add_note.py`, não injetado por parâmetro** — mesmo padrão já usado em `src/coding/agent_loop.py` (Fase 04): testes substituem `add_note.embed_text` por um fake via monkeypatch simples, sem inventar um novo mecanismo de injeção de dependência.
+- **Nota manual do 5.3 validada no hardware real**: salva com sucesso (`global_scope` foi de 6 para 7 pontos), e o mesmo comando rodado de novo confirmou o dedup (`[skip] ... já existe uma memória idêntica`).
+- **Editar texto sempre gera ID novo (5.4)**: como o ID em `global_scope` é derivado do `content_hash` (Decision 023), mudar o texto de uma memória necessariamente muda seu ID — decisão de hp de aceitar isso (em vez de, por exemplo, manter o ID fixo e só trocar o payload+vetor no lugar). O ponto antigo é apagado, o novo é inserido no lugar.
+- **Editar tags não muda o ID (5.4)**: troca simples de payload via `set_payload`, sem reembedding — separado deliberadamente da edição de texto para não pagar o custo de reembeddar só para trocar uma tag.
+- **Apagar só por ID explícito (5.4)** — decisão de hp: sem suporte a apagar em massa por filtro (`memory_type`/`tag`/`chat_id`) nesta fase, para reduzir risco de apagar mais do que o pretendido.
+- **Confirmação interativa antes de apagar (5.4)**: `delete_memory.py` pede `[s/N]` por padrão, com `--yes` para pular em automação — proteção adicional não pedida explicitamente, mas coerente com a cautela da regra 11 do projeto para ferramentas que destroem dado.
+- **`update_text` recusa colisão de conteúdo (5.4)**: se o texto novo já existe como outra memória (mesmo `content_hash`, logo mesmo ID via `memory_point_id()`), a edição é cancelada em vez de sobrescrever silenciosamente a memória existente — o ponto original permanece intocado nesse caso.
+- **Sem índice de payload para `tags` ainda (5.4)**: filtro por tag funciona sem índice dedicado (Qdrant faz full scan), aceitável no volume atual (dataset pessoal pequeno); criar o índice em `create_collections.py` fica como ajuste futuro se a listagem ficar lenta com uso real (regra 5 do projeto).
 
 **Fase 05 em andamento.** `06_DECISIONS.md` e `05_ROADMAP.md` do projeto principal ainda não foram atualizados com decisões formais numeradas — isso deve acontecer no fechamento da fase (passo 5.5), quando o conjunto final de decisões estiver estável.

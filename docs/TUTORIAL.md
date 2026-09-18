@@ -1,4 +1,4 @@
-# Tutorial — Fase 05, passo 5.3 (Memória Manual Avulsa)
+# Tutorial — Fase 05, passo 5.4 (Visualizar / Editar / Apagar Memórias)
 
 Este tutorial cobre **só** os arquivos entregues neste passo. Para setup
 geral do projeto, ver `README.md`. Para progresso acumulado, ver
@@ -6,69 +6,100 @@ geral do projeto, ver `README.md`. Para progresso acumulado, ver
 
 ## O que foi decidido neste passo (confirmado com hp antes de codar)
 
-1. **Texto direto na linha de comando** (`--text "..."`), sem abrir editor
-   externo tipo `git commit`.
-2. **`source` fixo em `"manual"`** para toda nota deste tipo — sem rótulo
-   por nota. Tags cobrem a necessidade de categorizar.
+1. **"Editar" cobre tags E texto**. Editar tags é uma troca simples de
+   payload (sem reembedding, mesmo ID). Editar texto reembedda via Ollama
+   e **gera um ID novo** — o ID é derivado do hash do conteúdo (Decision
+   023 / `schema.py`), então texto novo = hash novo = ID novo. O ponto
+   antigo é apagado.
+2. **Apagar é só por ID explícito** (um ou vários) — sem filtro em massa
+   por `memory_type`/`tag`/`chat_id`. Decisão de hp: mais seguro.
+3. Confirmação interativa antes de apagar de verdade (`[s/N]`), pulável
+   com `--yes` para uso em automação — proteção padrão de ferramenta
+   destrutiva, não pedida explicitamente mas coerente com a regra 11 do
+   projeto (cautela com o que pode destruir dado).
 
 ## Arquivos entregues
 
 | Arquivo | Destino em `IA-LOCAL/` | O que é |
 |---|---|---|
-| `src/memory/add_note.py` | `src/memory/add_note.py` | Novo — lógica da nota manual (`add_note()`) |
-| `scripts/add_memory.py` | `scripts/add_memory.py` | Novo — CLI fina |
-| `tests/test_add_note.py` | `tests/test_add_note.py` | Novo — 3 casos, com fakes, sem rede |
+| `src/memory/manage.py` | `src/memory/manage.py` | Novo — `list_memories()`, `get_memory()`, `update_tags()`, `update_text()`, `delete_memories()` |
+| `scripts/list_memories.py` | `scripts/list_memories.py` | Novo — listar com filtros, ou ver detalhe de uma por `--id` |
+| `scripts/edit_memory.py` | `scripts/edit_memory.py` | Novo — editar tags e/ou texto |
+| `scripts/delete_memory.py` | `scripts/delete_memory.py` | Novo — apagar por ID, com confirmação |
+| ` .py` | `tests/test_manage_memory.py` | Novo — 12 casos, com Qdrant fake, sem rede |
 
-`src/memory/schema.py` e `src/memory/save.py` **não mudaram neste passo** —
-o schema já suportava `memory_type="manual"` desde o 5.1, nada novo para
-adicionar lá.
+`schema.py`, `save.py` e `add_note.py` **não mudam neste passo**.
 
-## Diferença importante em relação ao /save (5.2)
+## Atenção: editar texto troca o ID
 
-No `/save`, o ponto já existe em `chat_scope` com vetor pronto — só é
-copiado. Aqui o texto é **novo**, então precisa ser embeddado via Ollama
-antes de entrar em `global_scope` (reaproveita `embed_text()` da Fase 02).
-Por isso, se a nota já existir (mesmo `content_hash`), o script nem chama
-o Ollama — evita gastar uma chamada de embedding à toa para um conteúdo
-que vai ser descartado por dedup de qualquer forma.
+Isso é o detalhe mais importante deste passo. Se você editar o **texto**
+de uma memória:
 
-## Padrão de teste usado
+```bash
+python scripts/edit_memory.py --id 13574b09-a154-59ca-a225-2526fb616122 --text "texto corrigido"
+```
+13574b09-a154-59ca-a225-2526fb616122
+O ID `abc-123` deixa de existir depois disso. O script imprime o novo ID
+no final (`Novo ID: ...`) — anote se for referenciar essa memória de
+novo (ex: pra apagar ou editar de novo depois).
 
-Mesmo padrão do `tests/test_agent_loop.py` (Fase 04): `embed_text` é
-importado direto no módulo (`src/memory/add_note.py`), e o teste
-substitui `add_note.embed_text` por uma função fake via monkeypatch
-simples — sem precisar do Ollama real rodando, e sem inventar um
-mecanismo de injeção de dependência novo só para isto.
+Editar só as **tags** não tem esse problema — o ID permanece o mesmo:
+
+```bash
+python scripts/edit_memory.py --id 13574b09-a154-59ca-a225-2526fb616122 --tags nova_tag,outra_tag
+```
+
+## Proteções embutidas em `update_text`
+
+- Editar para o **mesmo texto que já está lá** não faz nada (`editado: False`, sem gastar embedding).
+- Editar para um texto que **já existe como outra memória** é recusado
+  (evitaria colidir os dois no mesmo ID e sobrescrever a outra memória
+  sem querer) — o ponto original permanece intocado.
 
 ## Como testar
 
 ```bash
 # 1. Teste isolado da lógica (rápido, sem rede, sem Qdrant/Ollama reais)
-python tests/test_add_note.py
+python tests/test_manage_memory.py
 
 # 2. Reconfirma que nada quebrou dos passos anteriores
 python tests/test_memory_schema.py
 python tests/test_save_memory.py
+python tests/test_add_note.py
 
-# 3. Teste real: salvar uma nota de verdade
-python scripts/add_memory.py --text "IA-LOCAL usa Qdrant com duas collections: chat_scope e global_scope" --tags teste_5_3
+# 3. Teste real: listar o que já está em global_scope
+python scripts/list_memories.py
 
-# 4. Rodar o MESMO comando de novo — deve pular por dedup
-python scripts/add_memory.py --text "IA-LOCAL usa Qdrant com duas collections: chat_scope e global_scope" --tags teste_5_3
+# 4. Filtrar por tipo e por tag
+python scripts/list_memories.py --memory-type manual
+python scripts/list_memories.py --tag teste_5_3
+
+# 5. Ver o detalhe completo de uma memória (pegue um ID do passo 3)
+python scripts/list_memories.py --id b7c666fb-4a03-5fc9-9714-4da905545ae2
+
+# 6. Editar só as tags (mesmo ID depois)
+python scripts/edit_memory.py --id b7c666fb-4a03-5fc9-9714-4da905545ae2 --tags teste_5_4
+
+# 7. Editar o texto (ID novo depois — anote o que o script imprimir)
+python scripts/edit_memory.py --id b7c666fb-4a03-5fc9-9714-4da905545ae2 --text "texto atualizado no 5.4"
+
+# 8. Apagar (vai pedir confirmação [s/N])
+python scripts/delete_memory.py --ids b7c666fb-4a03-5fc9-9714-4da905545ae2
 ```
 
 ### Checklist de validação
 
-- [ ] `test_add_note.py` passa os 3 casos
-- [ ] `test_memory_schema.py` e `test_save_memory.py` continuam passando
-- [ ] Nota real salva mostra `[ok] Nota salva em 'global_scope' (id=...)`
-- [ ] Rodar o mesmo comando de novo mostra
-      `[skip] Nota não salva: já existe uma memória idêntica em global_scope`
-- [ ] No dashboard do Qdrant, a nota salva tem `memory_type: "manual"`,
-      `source: "manual"`, `tags: ["teste_5_3"]`
+- [ ] `test_manage_memory.py` passa os 12 casos
+- [ ] `test_memory_schema.py`, `test_save_memory.py`, `test_add_note.py` continuam passando
+- [ ] `list_memories.py` sem filtro mostra todas as memórias reais já salvas
+- [ ] Filtro por `--memory-type` e por `--tag` funciona no dado real
+- [ ] `--id` mostra o detalhe completo (texto inteiro, não truncado)
+- [ ] `edit_memory.py --tags` troca as tags mantendo o mesmo ID (confirme com `list_memories.py --id`)
+- [ ] `edit_memory.py --text` gera um ID novo, o antigo some (confirme que `list_memories.py --id ID_ANTIGO` não encontra mais nada)
+- [ ] `delete_memory.py` pede confirmação, cancela se você responder diferente de "s", e apaga de fato se confirmar
 
-## Próximo passo (5.4)
+## Fase 05 — o que falta
 
-Visualizar / editar / apagar memórias (regra 10 do projeto) — CLI para
-listar memórias em `global_scope` (filtrando por `memory_type`/`tags`),
-ver detalhe de uma, e apagar por ID.
+Só o passo 5.5: teste end-to-end cobrindo o pipeline completo da fase
+(ingestão → `/save` → nota manual → listar → editar → apagar) e o
+fechamento formal (roadmap, decisions, estrutura, current_state).
