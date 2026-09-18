@@ -76,8 +76,8 @@
 | Passo | Descrição | Status |
 |---|---|---|
 | 5.1 | Fundação: schema de memória em `global_scope` (`src/memory/schema.py`) | ✅ validado (teste sem rede) — pendente rodar `create_collections.py` + `ingest_document.py` no hardware real |
-| 5.2 | Mecanismo `/save` (`src/memory/save.py` + `scripts/save_memory.py`) | ✅ validado (6 testes com Qdrant fake) — pendente teste real de promoção no hardware |
-| 5.3 | Memória manual avulsa (nota livre direto em `global_scope`) | ⏳ pendente |
+| 5.2 | Mecanismo `/save` (`src/memory/save.py` + `scripts/save_memory.py`) | ✅ validado (6 testes fake + promoção real no hardware, confirmado no repo via tarball) |
+| 5.3 | Memória manual avulsa (`src/memory/add_note.py` + `scripts/add_memory.py`) | ✅ validado (3 testes com fake/monkeypatch) — pendente teste real no hardware |
 | 5.4 | Visualizar / editar / apagar memórias (regra 10 do projeto) | ⏳ pendente |
 | 5.5 | Teste end-to-end + fechamento da fase | ⏳ pendente |
 
@@ -95,5 +95,9 @@
 - **Reaproveitamento de vetor (5.2)**: a promoção usa o vetor já existente no ponto do `chat_scope` (`with_vectors=True`), sem reembeddar via Ollama — mesmo conteúdo, mesmo vetor, sem chamada nova ao modelo.
 - **`is_already_saved()` centralizada em `schema.py` (5.2)**: mesma lógica de dedup por hash usada desde a Fase 02, agora compartilhada entre `/save` (5.2) e a nota manual que vem no 5.3, em vez de duplicar a consulta pela terceira vez. `ingest_document.py` manteve sua própria função local equivalente sem alteração, para não mexer de novo num arquivo já validado sem necessidade real.
 - **`save_memory()` recebe o client já conectado**, em vez de abrir a conexão sozinha — permite testar a lógica de seleção/dedup com um Qdrant fake em memória (`tests/test_save_memory.py`), sem precisar de Qdrant real. Mesmo padrão de fakes já usado em `tests/test_agent_loop.py` (Fase 04).
+- **Teste real do `/save` no hardware (5.2)**: pesquisa real via `web_research.py` (156 chunks em `chat_scope`) → 2 pontos promovidos com sucesso via `save_memory.py` → payload correto (`memory_type="research"`, `origin_chat_id`, `tags`) confirmado.
+- **Nota manual avulsa (5.3)**: texto chega direto por `--text` (sem editor externo); `source` fixo em `"manual"` para todo ponto deste tipo, sem rótulo por nota — categorização fica por conta das `tags`, já suportadas desde o schema do 5.1.
+- **Dedup evita chamada de embedding à toa (5.3)**: `add_note()` checa `is_already_saved()` (mesma função do 5.2) ANTES de chamar `embed_text()` — se a nota já existe, nem gasta uma chamada ao Ollama para um conteúdo que seria descartado de qualquer forma.
+- **`embed_text` importado no nível do módulo em `add_note.py`, não injetado por parâmetro** — mesmo padrão já usado em `src/coding/agent_loop.py` (Fase 04): testes substituem `add_note.embed_text` por um fake via monkeypatch simples, sem inventar um novo mecanismo de injeção de dependência.
 
 **Fase 05 em andamento.** `06_DECISIONS.md` e `05_ROADMAP.md` do projeto principal ainda não foram atualizados com decisões formais numeradas — isso deve acontecer no fechamento da fase (passo 5.5), quando o conjunto final de decisões estiver estável.
