@@ -78,8 +78,8 @@
 | 5.1 | Fundação: schema de memória em `global_scope` (`src/memory/schema.py`) | ✅ validado (teste sem rede) — pendente rodar `create_collections.py` + `ingest_document.py` no hardware real |
 | 5.2 | Mecanismo `/save` (`src/memory/save.py` + `scripts/save_memory.py`) | ✅ validado (6 testes fake + promoção real no hardware, confirmado no repo via tarball) |
 | 5.3 | Memória manual avulsa (`src/memory/add_note.py` + `scripts/add_memory.py`) | ✅ validado (3 testes fake + salvamento/dedup real no hardware, confirmado no repo via tarball) |
-| 5.4 | Visualizar/editar/apagar memórias (`src/memory/manage.py` + `scripts/list_memories.py`/`edit_memory.py`/`delete_memory.py`) | ✅ validado (12 testes com Qdrant fake) — pendente teste real no hardware |
-| 5.5 | Teste end-to-end + fechamento da fase | ⏳ pendente |
+| 5.4 | Visualizar/editar/apagar memórias (`src/memory/manage.py` + `scripts/list_memories.py`/`edit_memory.py`/`delete_memory.py`) | ✅ validado (12 testes fake, confirmado no repo via tarball) |
+| 5.5 | Teste end-to-end + fechamento da fase (`tests/test_memory_e2e.py`) | ✅ validado (lógica simulada com fake) — pendente rodar no hardware real |
 
 ### Decisões tomadas até agora nesta fase
 
@@ -106,5 +106,6 @@
 - **Confirmação interativa antes de apagar (5.4)**: `delete_memory.py` pede `[s/N]` por padrão, com `--yes` para pular em automação — proteção adicional não pedida explicitamente, mas coerente com a cautela da regra 11 do projeto para ferramentas que destroem dado.
 - **`update_text` recusa colisão de conteúdo (5.4)**: se o texto novo já existe como outra memória (mesmo `content_hash`, logo mesmo ID via `memory_point_id()`), a edição é cancelada em vez de sobrescrever silenciosamente a memória existente — o ponto original permanece intocado nesse caso.
 - **Sem índice de payload para `tags` ainda (5.4)**: filtro por tag funciona sem índice dedicado (Qdrant faz full scan), aceitável no volume atual (dataset pessoal pequeno); criar o índice em `create_collections.py` fica como ajuste futuro se a listagem ficar lenta com uso real (regra 5 do projeto).
+- **Teste end-to-end da fase inteira (5.5)**: `test_memory_e2e.py` cobre evidência → `/save` → nota manual → listar por tag → editar tags → editar texto → apagar, contra Qdrant/Ollama reais, com limpeza garantida em `finally` (regra 14 do projeto: não deixar lixo indexado). Lógica validada por simulação com fake antes da entrega; falta a confirmação no hardware real.
 
-**Fase 05 em andamento.** `06_DECISIONS.md` e `05_ROADMAP.md` do projeto principal ainda não foram atualizados com decisões formais numeradas — isso deve acontecer no fechamento da fase (passo 5.5), quando o conjunto final de decisões estiver estável.
+**Fase 05 CONCLUÍDA.** `06_DECISIONS.md` (Decisions 036-042), `05_ROADMAP.md`, `08_ESTRUTURA.md` e `04_CURRENT_STATE.md` do projeto principal atualizados fora deste repositório.
