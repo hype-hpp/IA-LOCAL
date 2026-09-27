@@ -1,4 +1,4 @@
-# Tutorial — Fase 06, passo 6.3 (Indexação em crawl_scope)
+# Tutorial — Fase 06, passo 6.4 (Smart Cache — Atualização Incremental)
 
 Este tutorial cobre **só** os arquivos entregues neste passo. Para setup
 geral do projeto, ver `README.md`. Para progresso acumulado, ver
@@ -8,77 +8,85 @@ geral do projeto, ver `README.md`. Para progresso acumulado, ver
 
 | Arquivo | Destino em `IA-LOCAL/` | O que é |
 |---|---|---|
-| `indexer.py` | `src/crawler/indexer.py` | Novo — liga `crawl_adaptive()` (6.1) + `chunking.py`/`embedding_client.py` (Fase 02) + `schema.py` (6.2) |
-| `test_indexer.py` | `tests/test_indexer.py` | Novo — teste isolado com fakes, sem rede |
+| `adaptive.py` | `src/crawler/adaptive.py` | **Substitui** o do 6.1 — acrescenta `CachedAdaptiveCrawler` |
+| `test_smart_cache.py` | `tests/test_smart_cache.py` | Novo — teste isolado, sem rede |
 
-Nenhum arquivo existente foi modificado neste passo.
+`src/crawler/schema.py`, `src/crawler/indexer.py` e os testes do 6.2/6.3
+não mudaram.
 
-## O que o `indexer.py` faz
+## Achado técnico que motivou este passo
 
-`index_crawl_state(state, crawl_id, seed_url, query, client=None)`:
+Fui checar como o `AdaptiveCrawler` nativo faz fetch de página, pra ligar
+o Smart Cache que vocês decidiram usar (achado do 6.1). Descobri que ele
+usa um único método interno, `_crawl_with_preview()`, tanto pra semente
+quanto pra cada link seguido — e esse método monta o `CrawlerRunConfig`
+**sem especificar `cache_mode`**. O default do `crawl4ai==0.9.2` pra isso
+é `CacheMode.BYPASS` (bypassa cache pra leitura E escrita). Ou seja: **sem
+essa mudança, o `AdaptiveCrawler` nunca usava o Smart Cache**, mesmo ele
+existindo na lib.
 
-1. Para cada página em `state.knowledge_base` (retorno de `crawl_adaptive()`, 6.1), chunka o markdown com `chunk_text()` (mesma função da Fase 02).
-2. Para cada chunk, calcula `content_hash` e pula se já existe em `crawl_scope` (`is_already_crawled`, 6.2 — dedup **global**, não por `crawl_id`).
-3. Embeda em lote os chunks novos (`embed_texts()`, Fase 02) e insere em `crawl_scope` com o payload de `build_crawl_payload()` (6.2).
-4. Retorna um resumo: `{"pages": N, "chunks_novos": N, "chunks_pulados": N}`.
+## O que o `CachedAdaptiveCrawler` faz
 
-`state` é aceito por duck typing (só precisa de `.knowledge_base` com itens
-`.url`/`.markdown` e `.metrics` com `depth_reached`) — o indexador não
-importa o tipo `CrawlState` do `crawl4ai`, pra não acoplar essa peça ao
-tipo exato devolvido pelo 6.1.
+Subclasse de `AdaptiveCrawler` que sobrescreve só `_crawl_with_preview()`
+— reproduz os mesmos parâmetros do método original (`link_preview_config`,
+`score_links`) e acrescenta `cache_mode=CacheMode.ENABLED`. É um método
+"privado" da lib (prefixo `_`), não uma interface pública como
+`CrawlStrategy` — risco aceito e documentado no código: se uma versão
+futura do `crawl4ai` mudar essa assinatura interna, a sobrescrita para de
+valer e volta a cair no bypass padrão (não quebra, só deixa de cachear).
 
-### Nota honesta sobre o campo `depth`
+`crawl_adaptive()` ganhou o parâmetro `use_smart_cache: bool = True`
+(default ligado). O cache persiste em `~/.crawl4ai/crawl4ai.db` (sqlite,
+já é o comportamento nativo da lib) — funciona **entre execuções
+separadas** do crawler, não só dentro de uma mesma chamada.
 
-O `AdaptiveCrawler` **não rastreia profundidade por página individual** —
-só uma variável local dentro do laço do `digest()` e o
-`metrics["depth_reached"]` final (profundidade máxima alcançada na
-execução inteira). Por isso `depth` no payload de cada chunk é o
-`depth_reached` da execução inteira (mesmo valor pra todo chunk desse
-`crawl_id`), **não** a profundidade exata daquela página específica.
-Rastrear por página exigiria forkar o laço interno do `digest()` (mesma
-discussão do 6.1) — não fizemos isso sem necessidade comprovada (regra 1
-do projeto). Se isso fizer falta de verdade mais pra frente (ex: ranquear
-por proximidade da semente), é um ajuste pontual a fazer no 6.1.
+Como isso cobre "atualização incremental": revisitar uma URL não muda
+mais o corpo inteiro se o servidor confirmar via ETag/Last-Modified (ou o
+hash do `<head>`, fallback nativo) que nada mudou. E mesmo se o conteúdo
+vier de novo por algum motivo, o dedup por `content_hash` (6.2/6.3) evita
+reindexar/reembeddar à toa. As duas camadas trabalham juntas.
 
 ## Validação prévia (antes de chegar até você)
 
-Rodei os 3 casos do `test_indexer.py` de verdade (Qdrant fake +
-`embed_texts` fake via monkeypatch, mesmo padrão de `test_add_note.py` da
-Fase 05):
+Não dá pra testar isso contra rede real aqui no meu ambiente (minha lista
+de domínios permitidos não inclui sites arbitrários tipo
+`docs.crawl4ai.com`), então fiz o que dava pra fazer sem rede:
 
-1. Página nova é chunkada, embedada e inserida com o payload certo (`crawl_id`, `seed_url`, `source`, `depth`).
-2. Chunk com `content_hash` já existente não é reinserido **e não gasta chamada de embedding** (dedup antes do embed, mesmo princípio de `add_note.py`).
-3. Página com markdown vazio é ignorada, sem erro.
+1. **Confirmei no código-fonte real do `crawl4ai==0.9.2`** (baixado do PyPI) que `CrawlerRunConfig` tem `cache_mode: CacheMode = CacheMode.BYPASS` como default, e que `_crawl_with_preview()` não passa `cache_mode` — confirmando o problema antes de "consertar".
+2. **`test_smart_cache.py`**: substitui o `AsyncWebCrawler` por um fake que só grava o `CrawlerRunConfig` recebido (sem rede nenhuma) — confirma que `CachedAdaptiveCrawler._crawl_with_preview()` de fato usa `cache_mode=CacheMode.ENABLED`, e que `score_links`/`link_preview_config` continuam iguais ao original (a sobrescrita não perdeu nada).
+3. **`test_adaptive_crawler.py` (6.1) rodado de novo** — sem regressão, os 5 casos continuam passando.
 
-Achei e corrigi um bug no meu próprio teste antes de entregar (não no
-código): eu tinha calculado o `content_hash` esperado sobre a string crua
-do teste, mas `chunk_text()` normaliza espaçamento ao juntar as palavras
-— então o hash tem que ser calculado sobre o chunk já processado, não
-sobre o texto de entrada bruto. Corrigido e revalidado.
-
-**Não** testei contra Qdrant/Ollama reais — isso só existe no seu
-hardware.
+**O que só dá pra confirmar no seu hardware**: que o cache de verdade
+evita reservar corpo de página não mudada numa segunda execução — isso
+exige rede real e rodar `crawl_adaptive()` duas vezes seguidas contra o
+mesmo `start_url`.
 
 ## Como testar
 
 ```bash
-# 1. Teste isolado (rápido, sem rede)
-python tests/test_indexer.py
+# 1. Testes isolados (rápido, sem rede)
+python tests/test_smart_cache.py
+python tests/test_adaptive_crawler.py   # confirma que não regrediu
+
+# 2. Smoke test manual real (rede + Chromium) — rodar duas vezes seguidas
+python src/crawler/adaptive.py
+python src/crawler/adaptive.py
 ```
 
-Ainda não tem CLI pra rodar isso de ponta a ponta contra um site real —
-isso é o 6.6 (`scripts/crawl.py`), que junta `crawl_adaptive()` (6.1) +
-`index_crawl_state()` (6.3) num comando só. Se quiser validar o indexador
-contra o Qdrant real antes disso, dá pra rodar manualmente num `python -c`
-combinando `crawl_adaptive()` (6.1) com `index_crawl_state()` — me avisa
-se preferir que eu monte esse smoke test agora em vez de esperar o 6.6.
+Não tem um jeito fácil de "ver" o cache funcionando só pela saída do
+smoke test atual (ele não imprime hit/miss). Se quiser confirmar de
+verdade que a segunda rodada usou cache, dá pra inspecionar
+`~/.crawl4ai/crawl4ai.db` diretamente, ou eu adiciono um print de
+diagnóstico no smoke test — me avisa se quiser isso antes do 6.5.
 
 ### Checklist de validação
 
-- [ ] `test_indexer.py` roda sem erro, os 3 passos aparecem com `[ok]`
+- [ ] `test_smart_cache.py` roda sem erro, os 2 passos aparecem com `[ok]`
+- [ ] `test_adaptive_crawler.py` continua passando sem erro (sem regressão)
+- [ ] (opcional) rodar `python src/crawler/adaptive.py` duas vezes e confirmar que `~/.crawl4ai/crawl4ai.db` foi criado/atualizado
 
 ## Próximo passo
 
-6.4 — ativar o Smart Cache nativo do Crawl4AI (`CacheMode`) no fetch do
-crawler, pra atualização incremental entre execuções. Só começa depois de
-você confirmar o checklist acima.
+6.5 — limite de armazenamento do crawler (cap de nº de chunks/páginas em
+`crawl_scope` — isso é nosso, não vem da lib). Só começa depois de você
+confirmar o checklist acima.

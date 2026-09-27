@@ -1,21 +1,40 @@
 """
 Fase 06 - 6.1: Wrapper de crawling adaptativo.
+Fase 06 - 6.4: Smart Cache nativo do Crawl4AI (atualização incremental).
 
-O crawl4ai (já pinado em requirements.txt) traz dois módulos nativos que
-não são conectados entre si:
+O crawl4ai (já pinado em requirements.txt) traz módulos nativos que não
+são conectados entre si:
   - AdaptiveCrawler (crawl4ai.adaptive_crawler): decide profundidade e
     quando parar via confiança/saturação estatística (sem GPU/embedding).
     max_pages/max_depth funcionam como teto de segurança.
   - FilterChain (crawl4ai.deep_crawling.filters): exclusões e domínios
     permitidos (DomainFilter, URLPatternFilter).
+  - Smart Cache (crawl4ai.cache_context / async_database): revalidação
+    por ETag/Last-Modified com fallback por hash do <head>, persistida em
+    ~/.crawl4ai/crawl4ai.db (sqlite, entre execuções separadas).
 
-Ponto de integração: o AdaptiveCrawler aceita uma `strategy` customizada
-(interface CrawlStrategy). Em vez de forkar o laço interno do `digest()`
-(que quebraria em upgrades da lib), FilteredStatisticalStrategy sobrescreve
-só `rank_links()`: remove de state.pending_links os links que não passam
-no FilterChain, e delega o resto (scoring, confiança, parada) pro
-StatisticalStrategy original do crawl4ai. Nenhuma lógica de profundidade,
-orçamento ou parada é reimplementada aqui — só composição.
+Ponto de integração 1 (6.1): o AdaptiveCrawler aceita uma `strategy`
+customizada (interface CrawlStrategy). Em vez de forkar o laço interno do
+`digest()` (que quebraria em upgrades da lib), FilteredStatisticalStrategy
+sobrescreve só `rank_links()`: remove de state.pending_links os links que
+não passam no FilterChain, e delega o resto (scoring, confiança, parada)
+pro StatisticalStrategy original do crawl4ai.
+
+Ponto de integração 2 (6.4): o AdaptiveCrawler usa internamente um único
+método, `_crawl_with_preview()`, para TODO fetch (a semente e cada link
+seguido) — mas monta o CrawlerRunConfig sem especificar cache_mode, e o
+default do crawl4ai==0.9.2 pra CrawlerRunConfig é CacheMode.BYPASS. Ou
+seja, sem essa sobrescrita, o AdaptiveCrawler NUNCA usa o Smart Cache (nem
+lê, nem escreve). CachedAdaptiveCrawler sobrescreve só esse método,
+reproduzindo os mesmos parâmetros e só acrescentando
+cache_mode=CacheMode.ENABLED. É um método "privado" (prefixo _, não faz
+parte de nenhuma interface pública tipo CrawlStrategy) — risco aceito e
+documentado: se uma versão futura do crawl4ai mudar essa assinatura
+interna, a sobrescrita para de valer e volta a cair no bypass padrão da
+lib (não quebra, só deixa de cachear).
+
+Nenhuma lógica de profundidade, orçamento, parada ou cache é
+reimplementada aqui — só composição.
 """
 
 import asyncio
@@ -30,7 +49,9 @@ from crawl4ai import (
     FilterChain,
     DomainFilter,
     URLPatternFilter,
+    CacheMode,
 )
+from crawl4ai.async_configs import CrawlerRunConfig, LinkPreviewConfig
 
 
 class FilteredStatisticalStrategy(StatisticalStrategy):
@@ -52,6 +73,47 @@ class FilteredStatisticalStrategy(StatisticalStrategy):
             if await self.filter_chain.apply(link.href):
                 kept.append(link)
         return kept
+
+
+class CachedAdaptiveCrawler(AdaptiveCrawler):
+    """
+    AdaptiveCrawler nativo, com o Smart Cache do Crawl4AI ativado.
+
+    Sobrescreve só _crawl_with_preview() (o único ponto de fetch usado
+    internamente pelo digest(), tanto pra semente quanto pra cada link
+    seguido) pra acrescentar cache_mode=CacheMode.ENABLED — sem essa
+    sobrescrita, o AdaptiveCrawler usa o default da lib (BYPASS) e nunca
+    cacheia nada. O resto do método é uma cópia fiel do original (mesmos
+    parâmetros de link_preview_config e score_links), só com esse único
+    campo a mais.
+    """
+
+    async def _crawl_with_preview(self, url: str, query: str):
+        config = CrawlerRunConfig(
+            link_preview_config=LinkPreviewConfig(
+                include_internal=True,
+                include_external=False,
+                query=query,
+                concurrency=5,
+                timeout=self.config.link_preview_timeout,
+                max_links=50,
+                verbose=False,
+            ),
+            score_links=True,
+            cache_mode=CacheMode.ENABLED,
+        )
+        try:
+            result = await self.crawler.arun(url=url, config=config)
+            if hasattr(result, "_results") and result._results:
+                result = result._results[0]
+            if hasattr(result, "links") and result.links:
+                result.links["internal"] = [
+                    link for link in result.links["internal"] if link.get("head_data")
+                ]
+            return result
+        except Exception as e:
+            print(f"Error crawling {url}: {e}")
+            return None
 
 
 def build_filter_chain(
@@ -86,6 +148,7 @@ async def _crawl_adaptive_async(
     max_depth: int,
     confidence_threshold: float,
     filter_chain: Optional[FilterChain],
+    use_smart_cache: bool,
 ) -> CrawlState:
     config = AdaptiveConfig(
         max_pages=max_pages,
@@ -93,9 +156,10 @@ async def _crawl_adaptive_async(
         confidence_threshold=confidence_threshold,
     )
     strategy = FilteredStatisticalStrategy(filter_chain=filter_chain)
+    crawler_cls = CachedAdaptiveCrawler if use_smart_cache else AdaptiveCrawler
 
     async with AsyncWebCrawler() as crawler:
-        adaptive = AdaptiveCrawler(crawler=crawler, config=config, strategy=strategy)
+        adaptive = crawler_cls(crawler=crawler, config=config, strategy=strategy)
         state = await adaptive.digest(start_url=start_url, query=query)
     return state
 
@@ -109,6 +173,7 @@ def crawl_adaptive(
     allowed_domains: Optional[List[str]] = None,
     blocked_domains: Optional[List[str]] = None,
     exclude_patterns: Optional[List[str]] = None,
+    use_smart_cache: bool = True,
 ) -> CrawlState:
     """
     Roda o crawler adaptativo (estratégia estatística) a partir de
@@ -116,6 +181,13 @@ def crawl_adaptive(
     saturação atinge o threshold, ou quando bate o teto de segurança
     (max_pages/max_depth). Exclusões e domínios permitidos são aplicados
     via FilterChain nativo em cada rodada de ranking de links.
+
+    use_smart_cache=True (default) ativa o Smart Cache nativo do Crawl4AI
+    (ETag/Last-Modified + fallback por hash do <head>), persistido em
+    ~/.crawl4ai/crawl4ai.db entre execuções separadas — páginas não
+    mudadas desde a última visita são revalidadas sem re-baixar o corpo
+    inteiro. Combinado com o dedup por content_hash do crawl_scope (6.2/
+    6.3), cobre a "atualização incremental" do roadmap desta fase.
 
     Retorna o CrawlState final:
       - state.knowledge_base: lista de CrawlResult já crawleados
@@ -126,7 +198,8 @@ def crawl_adaptive(
     filter_chain = build_filter_chain(allowed_domains, blocked_domains, exclude_patterns)
     return asyncio.run(
         _crawl_adaptive_async(
-            start_url, query, max_pages, max_depth, confidence_threshold, filter_chain
+            start_url, query, max_pages, max_depth, confidence_threshold,
+            filter_chain, use_smart_cache,
         )
     )
 

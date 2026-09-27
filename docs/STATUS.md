@@ -116,7 +116,8 @@
 |---|---|---|
 | 6.1 | Wrapper de crawling adaptativo (`src/crawler/adaptive.py`) | ✅ validado (5 testes sem rede + smoke test real no hardware — 1 página, confiança 0.700) |
 | 6.2 | Collection `crawl_scope` + schema de payload (`create_collections.py`, `src/crawler/schema.py`) | ✅ validado (4 testes sem rede + `create_collections.py` real no hardware — `crawl_scope` criado, `chat_scope`/`global_scope` intactos: 398/6 pontos) |
-| 6.3 | Indexação em crawl_scope (`src/crawler/indexer.py`) | ✅ validado (3 testes sem rede, Qdrant fake + embed_texts fake) — pendente rodar contra Qdrant/Ollama reais (só via 6.6, ou smoke test manual se pedido antes) |
+| 6.3 | Indexação em crawl_scope (`src/crawler/indexer.py`) | ✅ validado sem rede (3 testes, Qdrant fake + embed_texts fake) — **pendente rodar no hardware** (ainda não reportado) |
+| 6.4 | Smart Cache nativo ativado (`CachedAdaptiveCrawler` em `src/crawler/adaptive.py`) | ✅ validado sem rede (2 testes com AsyncWebCrawler fake, confirmando cache_mode=ENABLED) — pendente confirmar comportamento real de hit/miss no hardware |
 
 ### Decisões tomadas até agora nesta fase
 
@@ -132,3 +133,5 @@
 
 - **`src/crawler/indexer.py` (6.3)** liga `crawl_adaptive()` (6.1) + `chunking.py`/`embedding_client.py` (Fase 02) + `schema.py` (6.2): chunka cada página do `knowledge_base`, deduplica por `content_hash` global antes de gastar embedding, insere em `crawl_scope`.
 - **Limitação conhecida do campo `depth` (6.3)**: o `AdaptiveCrawler` não rastreia profundidade por página individual, só o `depth_reached` final da execução inteira — por isso `depth` no payload é o mesmo valor pra todo chunk de um `crawl_id`, não a profundidade exata de cada página. Rastrear por página exigiria forkar o laço interno do `digest()` (mesma discussão do 6.1); não fizemos isso sem necessidade comprovada (regra 1). Revisar se fizer falta de verdade.
+- **Achado técnico (6.4)**: `AdaptiveCrawler._crawl_with_preview()` monta `CrawlerRunConfig` sem `cache_mode` — e o default do `crawl4ai==0.9.2` é `CacheMode.BYPASS`. Sem correção, o `AdaptiveCrawler` nunca usava o Smart Cache nativo, mesmo ele existindo na lib. Corrigido com `CachedAdaptiveCrawler(AdaptiveCrawler)`, que sobrescreve só esse método pra acrescentar `cache_mode=CacheMode.ENABLED`. Cache persiste em `~/.crawl4ai/crawl4ai.db` (sqlite, nativo da lib), entre execuções separadas.
+- `crawl_adaptive()` ganhou `use_smart_cache: bool = True` (default ligado, dá pra desligar se precisar).
