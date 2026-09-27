@@ -109,3 +109,18 @@
 - **Teste end-to-end da fase inteira (5.5)**: `test_memory_e2e.py` cobre evidência → `/save` → nota manual → listar por tag → editar tags → editar texto → apagar, contra Qdrant/Ollama reais, com limpeza garantida em `finally` (regra 14 do projeto: não deixar lixo indexado). Lógica validada por simulação com fake antes da entrega; falta a confirmação no hardware real.
 
 **Fase 05 CONCLUÍDA.** `06_DECISIONS.md` (Decisions 036-042), `05_ROADMAP.md`, `08_ESTRUTURA.md` e `04_CURRENT_STATE.md` do projeto principal atualizados fora deste repositório.
+
+## Fase 06 (Adaptive Crawler) — EM ANDAMENTO
+
+| Passo | Descrição | Status |
+|---|---|---|
+| 6.1 | Wrapper de crawling adaptativo (`src/crawler/adaptive.py`) | ✅ validado (5 testes sem rede, com `crawl4ai==0.9.2` real instalado) — pendente rodar o smoke test real (rede + Chromium) no hardware |
+
+### Decisões tomadas até agora nesta fase
+
+- **Escopo de armazenamento novo (`crawl_scope`)**, separado de `chat_scope`/`global_scope` — decisão de hp, ainda não implementado (entra no 6.2).
+- **Critério de parada usa o `AdaptiveCrawler` nativo do Crawl4AI** (estratégia `"statistical"`, sem GPU/embedding) para decidir quando a cobertura é suficiente — `max_pages`/`max_depth` viram teto de segurança, não o critério principal. Decisão de hp, tomada depois de eu inspecionar o código-fonte real do `crawl4ai==0.9.2` (baixado do PyPI) e confirmar que o módulo já existe na dependência pinada desde a Fase 03.
+- **Topic filtering + exclusions reaproveitam `DomainFilter`/`URLPatternFilter`/`KeywordRelevanceScorer` nativos** do `crawl4ai.deep_crawling`, em vez de filtro próprio — decisão de hp.
+- **Atualização incremental usa o Smart Cache nativo do Crawl4AI** (`CacheMode`, ETag/Last-Modified com fallback por hash do `<head>`), em vez de implementar isso na mão — decisão de hp. Ainda não ativado (entra num passo futuro desta fase).
+- **Achado de arquitetura (6.1)**: `AdaptiveCrawler` e o `FilterChain` de `deep_crawling` são dois sistemas nativos separados, não conectados entre si na lib — `AdaptiveCrawler` não aceita `filter_chain`/`url_scorer` diretamente. Resolvido com `FilteredStatisticalStrategy`, uma subclasse fina de `StatisticalStrategy` que só sobrescreve `rank_links()` para aplicar o `FilterChain` a `state.pending_links` antes de delegar o ranking/parada pro `StatisticalStrategy` original — usa o único ponto de extensão público (injeção de `strategy`) em vez de forkar o laço interno do `digest()`.
+- **Repo verificado via tarball (`codeload.github.com`) antes de começar**, conforme processo — usado também para inspecionar `page_fetcher.py`/`evidence.py` reais antes de desenhar o 6.1 (regra 2 do projeto: não reinventar o que já existe).
