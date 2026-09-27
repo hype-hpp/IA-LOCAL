@@ -1,30 +1,36 @@
 """
 Fase 02 - 2.1 + 2.2: Cria as collections do Qdrant separadas por escopo (Decision 018).
 Fase 05 - 5.1: Adiciona índice de payload para 'memory_type' em global_scope.
+Fase 06 - 6.2: Adiciona a collection 'crawl_scope' (Adaptive Crawler).
 
-Duas collections, não uma única com filtro de payload:
+Três collections, não uma única com filtro de payload:
   - chat_scope   -> pontos de ./chats/{chat_id}/, apagados junto com o chat
   - global_scope -> pontos de ./knowledge/, persistentes, promovidos via /save
+  - crawl_scope  -> pontos do crawler adaptativo (Fase 06), escopo próprio,
+                    separado dos outros dois (decisão de hp na Fase 06):
+                    persistente como global_scope, mas com identidade de
+                    provenance própria (crawl_id/seed_url/depth) em vez de
+                    chat_id ou memory_type.
 
 ATENÇÃO - decisão pendente de validação:
   VECTOR_SIZE está setado para 2560, assumindo Qwen3-Embedding-4B.
   Isso precisa ser confirmado rodando o modelo real e checando a
   dimensão do vetor retornado antes de indexar qualquer dado de verdade.
 
-Mudança de comportamento na Fase 05 (5.1):
-  Antes, os índices de payload só eram criados junto com a collection nova
-  (bloco pulado inteiro se a collection já existisse). Isso significava que
-  rodar este script de novo numa instalação já existente NUNCA adicionava
-  um índice novo. Agora a criação de índice é uma etapa separada, sempre
-  executada — para poder adicionar índices novos (como 'memory_type' agora)
-  numa instalação já em uso, bastando rodar o script de novo.
+Mudança de comportamento na Fase 05 (5.1), mantida sem alteração:
+  A criação de índice é uma etapa separada, sempre executada — para poder
+  adicionar índices novos numa instalação já em uso, bastando rodar o
+  script de novo. Ver ensure_payload_index() para o motivo (achado real
+  de teste no hardware, Qdrant idempotente sem levantar exceção).
 
-  Achado real em teste no hardware (5.1): checar existência do índice via
-  payload_schema ANTES de criar, em vez de tentar criar e tratar exceção
-  de "já existe" — client.create_payload_index() do Qdrant não levanta
-  exceção quando o índice já existe (é idempotente no servidor), então um
-  try/except nunca detectava esse caso e o log sempre dizia "criado", 
-  mesmo quando não tinha nada novo pra criar.
+Refatoração da Fase 06 (6.2):
+  COMMON_INDEXES/SCOPED_INDEXES (Fase 02-05) viravam um único
+  COLLECTION_INDEXES por collection, porque 'crawl_scope' não usa
+  'chat_id' (usa 'crawl_id') — aplicar o mesmo COMMON_INDEXES de sempre
+  também no crawl_scope criaria um índice para um campo que nunca existe
+  no payload dessa collection. Os índices de chat_scope/global_scope
+  continuam exatamente os mesmos de antes (mesmo comportamento, só
+  reorganizado num único dicionário em vez de dois).
 """
 
 import os
@@ -35,14 +41,14 @@ QDRANT_HOST = os.environ.get("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.environ.get("QDRANT_PORT", "6333"))
 VECTOR_SIZE = int(os.environ.get("VECTOR_SIZE", "2560"))  # TODO: confirmar com Qwen3-Embedding-4B real
 
-COLLECTIONS = ["chat_scope", "global_scope"]
+COLLECTIONS = ["chat_scope", "global_scope", "crawl_scope"]
 
-# Índices aplicados às duas collections (Decision 018 + 003)
-COMMON_INDEXES = ["chat_id", "source", "content_hash"]
-
-# Índices específicos de uma única collection (Fase 05 - 5.1)
-SCOPED_INDEXES = {
-    "global_scope": ["memory_type"],
+# Índices de payload por collection. chat_scope e global_scope ficam
+# idênticos ao que já existia (Fase 02/05); crawl_scope é novo (6.2).
+COLLECTION_INDEXES = {
+    "chat_scope": ["chat_id", "source", "content_hash"],
+    "global_scope": ["chat_id", "source", "content_hash", "memory_type"],
+    "crawl_scope": ["crawl_id", "source", "content_hash"],
 }
 
 
@@ -93,9 +99,7 @@ def main():
 
         # Índices de payload — sempre garantidos, independente da collection
         # ser nova ou já existir (ver nota de mudança de comportamento acima).
-        for field_name in COMMON_INDEXES:
-            ensure_payload_index(client, name, field_name)
-        for field_name in SCOPED_INDEXES.get(name, []):
+        for field_name in COLLECTION_INDEXES.get(name, []):
             ensure_payload_index(client, name, field_name)
 
     print("\nEstado final das collections:")

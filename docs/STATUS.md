@@ -71,7 +71,7 @@
 
 ---
 
-## Fase 05 (Memory) — EM ANDAMENTO
+## Fase 05 (Memory) — CONCLUÍDA
 
 | Passo | Descrição | Status |
 |---|---|---|
@@ -114,13 +114,17 @@
 
 | Passo | Descrição | Status |
 |---|---|---|
-| 6.1 | Wrapper de crawling adaptativo (`src/crawler/adaptive.py`) | ✅ validado (5 testes sem rede, com `crawl4ai==0.9.2` real instalado) — pendente rodar o smoke test real (rede + Chromium) no hardware |
+| 6.1 | Wrapper de crawling adaptativo (`src/crawler/adaptive.py`) | ✅ validado (5 testes sem rede + smoke test real no hardware — 1 página, confiança 0.700) |
+| 6.2 | Collection `crawl_scope` + schema de payload (`create_collections.py`, `src/crawler/schema.py`) | ✅ validado (4 testes sem rede) — pendente rodar `create_collections.py` contra o Qdrant real |
 
 ### Decisões tomadas até agora nesta fase
 
-- **Escopo de armazenamento novo (`crawl_scope`)**, separado de `chat_scope`/`global_scope` — decisão de hp, ainda não implementado (entra no 6.2).
+- **Escopo de armazenamento novo (`crawl_scope`)**, separado de `chat_scope`/`global_scope` — decisão de hp, implementado no 6.2 (collection + schema de payload).
 - **Critério de parada usa o `AdaptiveCrawler` nativo do Crawl4AI** (estratégia `"statistical"`, sem GPU/embedding) para decidir quando a cobertura é suficiente — `max_pages`/`max_depth` viram teto de segurança, não o critério principal. Decisão de hp, tomada depois de eu inspecionar o código-fonte real do `crawl4ai==0.9.2` (baixado do PyPI) e confirmar que o módulo já existe na dependência pinada desde a Fase 03.
 - **Topic filtering + exclusions reaproveitam `DomainFilter`/`URLPatternFilter`/`KeywordRelevanceScorer` nativos** do `crawl4ai.deep_crawling`, em vez de filtro próprio — decisão de hp.
 - **Atualização incremental usa o Smart Cache nativo do Crawl4AI** (`CacheMode`, ETag/Last-Modified com fallback por hash do `<head>`), em vez de implementar isso na mão — decisão de hp. Ainda não ativado (entra num passo futuro desta fase).
 - **Achado de arquitetura (6.1)**: `AdaptiveCrawler` e o `FilterChain` de `deep_crawling` são dois sistemas nativos separados, não conectados entre si na lib — `AdaptiveCrawler` não aceita `filter_chain`/`url_scorer` diretamente. Resolvido com `FilteredStatisticalStrategy`, uma subclasse fina de `StatisticalStrategy` que só sobrescreve `rank_links()` para aplicar o `FilterChain` a `state.pending_links` antes de delegar o ranking/parada pro `StatisticalStrategy` original — usa o único ponto de extensão público (injeção de `strategy`) em vez de forkar o laço interno do `digest()`.
 - **Repo verificado via tarball (`codeload.github.com`) antes de começar**, conforme processo — usado também para inspecionar `page_fetcher.py`/`evidence.py` reais antes de desenhar o 6.1 (regra 2 do projeto: não reinventar o que já existe).
+
+- **`crawl_scope` criado como terceira collection (6.2)**, com schema de payload próprio (`crawl_id`/`seed_url`/`query`/`depth`/`chunk_index`/`crawled_at`) em `src/crawler/schema.py` — dedup por `content_hash` é GLOBAL dentro do `crawl_scope` (não escopado por `crawl_id`, diferente do `chat_scope`), para que recrawlear a mesma página em execuções diferentes sobrescreva em vez de duplicar.
+- **`create_collections.py` refatorado (6.2)**: `COMMON_INDEXES`/`SCOPED_INDEXES` viraram um único `COLLECTION_INDEXES` por collection, porque `crawl_scope` usa `crawl_id` em vez de `chat_id` — aplicar o índice `chat_id` de sempre nessa collection criaria um índice para um campo inexistente no payload. Índices de `chat_scope`/`global_scope` confirmados idênticos aos de antes (sem regressão).
