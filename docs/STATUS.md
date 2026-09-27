@@ -115,7 +115,8 @@
 | Passo | Descrição | Status |
 |---|---|---|
 | 6.1 | Wrapper de crawling adaptativo (`src/crawler/adaptive.py`) | ✅ validado (5 testes sem rede + smoke test real no hardware — 1 página, confiança 0.700) |
-| 6.2 | Collection `crawl_scope` + schema de payload (`create_collections.py`, `src/crawler/schema.py`) | ✅ validado (4 testes sem rede) — pendente rodar `create_collections.py` contra o Qdrant real |
+| 6.2 | Collection `crawl_scope` + schema de payload (`create_collections.py`, `src/crawler/schema.py`) | ✅ validado (4 testes sem rede + `create_collections.py` real no hardware — `crawl_scope` criado, `chat_scope`/`global_scope` intactos: 398/6 pontos) |
+| 6.3 | Indexação em crawl_scope (`src/crawler/indexer.py`) | ✅ validado (3 testes sem rede, Qdrant fake + embed_texts fake) — pendente rodar contra Qdrant/Ollama reais (só via 6.6, ou smoke test manual se pedido antes) |
 
 ### Decisões tomadas até agora nesta fase
 
@@ -128,3 +129,6 @@
 
 - **`crawl_scope` criado como terceira collection (6.2)**, com schema de payload próprio (`crawl_id`/`seed_url`/`query`/`depth`/`chunk_index`/`crawled_at`) em `src/crawler/schema.py` — dedup por `content_hash` é GLOBAL dentro do `crawl_scope` (não escopado por `crawl_id`, diferente do `chat_scope`), para que recrawlear a mesma página em execuções diferentes sobrescreva em vez de duplicar.
 - **`create_collections.py` refatorado (6.2)**: `COMMON_INDEXES`/`SCOPED_INDEXES` viraram um único `COLLECTION_INDEXES` por collection, porque `crawl_scope` usa `crawl_id` em vez de `chat_id` — aplicar o índice `chat_id` de sempre nessa collection criaria um índice para um campo inexistente no payload. Índices de `chat_scope`/`global_scope` confirmados idênticos aos de antes (sem regressão).
+
+- **`src/crawler/indexer.py` (6.3)** liga `crawl_adaptive()` (6.1) + `chunking.py`/`embedding_client.py` (Fase 02) + `schema.py` (6.2): chunka cada página do `knowledge_base`, deduplica por `content_hash` global antes de gastar embedding, insere em `crawl_scope`.
+- **Limitação conhecida do campo `depth` (6.3)**: o `AdaptiveCrawler` não rastreia profundidade por página individual, só o `depth_reached` final da execução inteira — por isso `depth` no payload é o mesmo valor pra todo chunk de um `crawl_id`, não a profundidade exata de cada página. Rastrear por página exigiria forkar o laço interno do `digest()` (mesma discussão do 6.1); não fizemos isso sem necessidade comprovada (regra 1). Revisar se fizer falta de verdade.
