@@ -1,92 +1,68 @@
-# Tutorial — Fase 06, passo 6.4 (Smart Cache — Atualização Incremental)
+# Tutorial — Fase 06, passo 6.5 (Limite de Armazenamento do crawl_scope)
 
-Este tutorial cobre **só** os arquivos entregues neste passo. Para setup
-geral do projeto, ver `README.md`. Para progresso acumulado, ver
-`docs/STATUS.md`.
+Este tutorial cobre **só** os arquivos entregues neste passo. Setup
+geral: `README.md`. Progresso acumulado: `docs/STATUS.md`.
 
 ## Arquivos entregues
 
 | Arquivo | Destino em `IA-LOCAL/` | O que é |
 |---|---|---|
-| `adaptive.py` | `src/crawler/adaptive.py` | **Substitui** o do 6.1 — acrescenta `CachedAdaptiveCrawler` |
-| `test_smart_cache.py` | `tests/test_smart_cache.py` | Novo — teste isolado, sem rede |
+| `retention.py` | `src/crawler/retention.py` | Novo — limite de armazenamento (regra 13 do projeto) |
+| `indexer.py` | `src/crawler/indexer.py` | **Substitui** o do 6.3 — chama `enforce_storage_limit()` ao final de toda indexação |
+| `test_indexer.py` | `tests/test_indexer.py` | **Substitui** — fake ganhou `count()`/`delete()` |
+| `test_retention.py` | `tests/test_retention.py` | Novo — teste isolado, sem rede |
 
-`src/crawler/schema.py`, `src/crawler/indexer.py` e os testes do 6.2/6.3
-não mudaram.
+## Decisões (suas, desta conversa)
 
-## Achado técnico que motivou este passo
+- Quando `crawl_scope` passa do teto: **automático com aviso** — apaga sozinho, mas imprime um log de cada execução removida.
+- O teto conta **execuções (`crawl_id`) inteiras**, não chunks soltos — nunca sobra metade de uma execução.
 
-Fui checar como o `AdaptiveCrawler` nativo faz fetch de página, pra ligar
-o Smart Cache que vocês decidiram usar (achado do 6.1). Descobri que ele
-usa um único método interno, `_crawl_with_preview()`, tanto pra semente
-quanto pra cada link seguido — e esse método monta o `CrawlerRunConfig`
-**sem especificar `cache_mode`**. O default do `crawl4ai==0.9.2` pra isso
-é `CacheMode.BYPASS` (bypassa cache pra leitura E escrita). Ou seja: **sem
-essa mudança, o `AdaptiveCrawler` nunca usava o Smart Cache**, mesmo ele
-existindo na lib.
+## O que o `retention.py` faz
 
-## O que o `CachedAdaptiveCrawler` faz
+`enforce_storage_limit(client, max_crawl_ids=DEFAULT_MAX_CRAWL_IDS)`:
 
-Subclasse de `AdaptiveCrawler` que sobrescreve só `_crawl_with_preview()`
-— reproduz os mesmos parâmetros do método original (`link_preview_config`,
-`score_links`) e acrescenta `cache_mode=CacheMode.ENABLED`. É um método
-"privado" da lib (prefixo `_`), não uma interface pública como
-`CrawlStrategy` — risco aceito e documentado no código: se uma versão
-futura do `crawl4ai` mudar essa assinatura interna, a sobrescrita para de
-valer e volta a cair no bypass padrão (não quebra, só deixa de cachear).
+1. Varre `crawl_scope` inteiro (só os campos `crawl_id`/`crawled_at` do payload, sem vetor — leve) e acha a data mais antiga de cada `crawl_id`.
+2. Se o número de `crawl_id`s distintos passar do teto, apaga as execuções mais antigas **inteiras** (via filtro nativo do Qdrant por `crawl_id`, que já tem índice desde o 6.2), da mais antiga pra mais nova, até caber no teto.
+3. Imprime um log por execução removida (`crawl_id`, quantos pontos, desde quando) e um resumo no final.
 
-`crawl_adaptive()` ganhou o parâmetro `use_smart_cache: bool = True`
-(default ligado). O cache persiste em `~/.crawl4ai/crawl4ai.db` (sqlite,
-já é o comportamento nativo da lib) — funciona **entre execuções
-separadas** do crawler, não só dentro de uma mesma chamada.
+`DEFAULT_MAX_CRAWL_IDS` vem de `CRAWL_SCOPE_MAX_CRAWL_IDS` (env var), default **50** — ajustável sem mexer no código.
 
-Como isso cobre "atualização incremental": revisitar uma URL não muda
-mais o corpo inteiro se o servidor confirmar via ETag/Last-Modified (ou o
-hash do `<head>`, fallback nativo) que nada mudou. E mesmo se o conteúdo
-vier de novo por algum motivo, o dedup por `content_hash` (6.2/6.3) evita
-reindexar/reembeddar à toa. As duas camadas trabalham juntas.
+`index_crawl_state()` (6.3) agora chama isso **sempre**, mesmo quando não há chunk novo pra indexar — porque uma execução anterior pode já ter deixado o total acima do teto, e o resumo retornado ganhou a chave `"retention"`.
 
 ## Validação prévia (antes de chegar até você)
 
-Não dá pra testar isso contra rede real aqui no meu ambiente (minha lista
-de domínios permitidos não inclui sites arbitrários tipo
-`docs.crawl4ai.com`), então fiz o que dava pra fazer sem rede:
+Rodei os 4 casos do `test_retention.py` de verdade, com Qdrant fake:
 
-1. **Confirmei no código-fonte real do `crawl4ai==0.9.2`** (baixado do PyPI) que `CrawlerRunConfig` tem `cache_mode: CacheMode = CacheMode.BYPASS` como default, e que `_crawl_with_preview()` não passa `cache_mode` — confirmando o problema antes de "consertar".
-2. **`test_smart_cache.py`**: substitui o `AsyncWebCrawler` por um fake que só grava o `CrawlerRunConfig` recebido (sem rede nenhuma) — confirma que `CachedAdaptiveCrawler._crawl_with_preview()` de fato usa `cache_mode=CacheMode.ENABLED`, e que `score_links`/`link_preview_config` continuam iguais ao original (a sobrescrita não perdeu nada).
-3. **`test_adaptive_crawler.py` (6.1) rodado de novo** — sem regressão, os 5 casos continuam passando.
+1. Dentro do limite → nada é removido.
+2. Passou do limite por 1 → remove só a execução mais antiga, inteira; as outras ficam intactas (nem uma removida a mais, nem chunk perdido de execução que devia ficar).
+3. Passou do limite por várias → remove todas as antigas necessárias, da mais antiga pra mais nova, até caber.
 
-**O que só dá pra confirmar no seu hardware**: que o cache de verdade
-evita reservar corpo de página não mudada numa segunda execução — isso
-exige rede real e rodar `crawl_adaptive()` duas vezes seguidas contra o
-mesmo `start_url`.
+E os 3 casos do `test_indexer.py` de novo, sem regressão (o fake ganhou `count()`/`delete()` mas o comportamento de indexação continua igual).
+
+**Não** testei contra Qdrant real — isso só existe no seu hardware. Com o
+`crawl_scope` ainda em 0 pontos (última vez que você rodou), a retenção
+não vai fazer nada visível ainda — só entra em ação depois de várias
+execuções reais de crawl.
 
 ## Como testar
 
 ```bash
-# 1. Testes isolados (rápido, sem rede)
-python tests/test_smart_cache.py
-python tests/test_adaptive_crawler.py   # confirma que não regrediu
-
-# 2. Smoke test manual real (rede + Chromium) — rodar duas vezes seguidas
-python src/crawler/adaptive.py
-python src/crawler/adaptive.py
+python tests/test_retention.py
+python tests/test_indexer.py   # confirma que não regrediu
 ```
 
-Não tem um jeito fácil de "ver" o cache funcionando só pela saída do
-smoke test atual (ele não imprime hit/miss). Se quiser confirmar de
-verdade que a segunda rodada usou cache, dá pra inspecionar
-`~/.crawl4ai/crawl4ai.db` diretamente, ou eu adiciono um print de
-diagnóstico no smoke test — me avisa se quiser isso antes do 6.5.
+Não tem ainda como rodar isso "de ponta a ponta" contra o Qdrant real —
+falta o 6.6 (`scripts/crawl.py`), que vai chamar `crawl_adaptive()` (6.1)
++ `index_crawl_state()` (6.3, já com retention embutida) num comando só.
 
 ### Checklist de validação
 
-- [ ] `test_smart_cache.py` roda sem erro, os 2 passos aparecem com `[ok]`
-- [ ] `test_adaptive_crawler.py` continua passando sem erro (sem regressão)
-- [ ] (opcional) rodar `python src/crawler/adaptive.py` duas vezes e confirmar que `~/.crawl4ai/crawl4ai.db` foi criado/atualizado
+- [ ] `test_retention.py` roda sem erro, os 3 passos aparecem com `[ok]`
+- [ ] `test_indexer.py` continua passando (sem regressão)
 
 ## Próximo passo
 
-6.5 — limite de armazenamento do crawler (cap de nº de chunks/páginas em
-`crawl_scope` — isso é nosso, não vem da lib). Só começa depois de você
-confirmar o checklist acima.
+6.6 — `scripts/crawl.py` (CLI) + teste de integração ponta a ponta,
+juntando tudo (6.1 a 6.5) num comando só contra o Qdrant/Ollama reais.
+Esse é o último passo planejado da Fase 06 antes do fechamento (roadmap,
+decisions, estrutura, current_state).

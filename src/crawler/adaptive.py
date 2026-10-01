@@ -22,13 +22,17 @@ pro StatisticalStrategy original do crawl4ai.
 
 Ponto de integração 2 (6.4): o AdaptiveCrawler usa internamente um único
 método, `_crawl_with_preview()`, para TODO fetch (a semente e cada link
-seguido) — mas monta o CrawlerRunConfig sem especificar cache_mode, e o
-default do crawl4ai==0.9.2 pra CrawlerRunConfig é CacheMode.BYPASS. Ou
-seja, sem essa sobrescrita, o AdaptiveCrawler NUNCA usa o Smart Cache (nem
-lê, nem escreve). CachedAdaptiveCrawler sobrescreve só esse método,
-reproduzindo os mesmos parâmetros e só acrescentando
-cache_mode=CacheMode.ENABLED. É um método "privado" (prefixo _, não faz
-parte de nenhuma interface pública tipo CrawlStrategy) — risco aceito e
+seguido) — mas monta o CrawlerRunConfig sem especificar cache_mode nem
+check_cache_freshness. O default de cache_mode no crawl4ai==0.9.2 é
+CacheMode.BYPASS (sem cache nenhum). Achado adicional, pego só depois de
+observar o comportamento real no hardware (fetches suspeitos de 0.01s
+sem nenhuma linha de log "[CACHE]"): cache_mode=ENABLED sozinho NÃO liga
+a validação de frescor — ele só serve o cache indefinidamente, pra
+sempre, sem nunca checar se a página mudou. Quem de fato liga o
+CacheValidator (ETag/Last-Modified, fallback por hash do <head>) é
+check_cache_freshness=True, um parâmetro separado. CachedAdaptiveCrawler
+seta os dois juntos. É um método "privado" (prefixo _, não faz parte de
+nenhuma interface pública tipo CrawlStrategy) — risco aceito e
 documentado: se uma versão futura do crawl4ai mudar essa assinatura
 interna, a sobrescrita para de valer e volta a cair no bypass padrão da
 lib (não quebra, só deixa de cachear).
@@ -77,15 +81,17 @@ class FilteredStatisticalStrategy(StatisticalStrategy):
 
 class CachedAdaptiveCrawler(AdaptiveCrawler):
     """
-    AdaptiveCrawler nativo, com o Smart Cache do Crawl4AI ativado.
+    AdaptiveCrawler nativo, com o Smart Cache do Crawl4AI ativado de
+    verdade — cache_mode=ENABLED (usa o cache) + check_cache_freshness=True
+    (valida se ainda é o mesmo conteúdo via ETag/Last-Modified/head
+    fingerprint antes de confiar nele). As duas flags são necessárias:
+    cache_mode sozinho só serve o cache pra sempre, sem nunca revalidar.
 
     Sobrescreve só _crawl_with_preview() (o único ponto de fetch usado
     internamente pelo digest(), tanto pra semente quanto pra cada link
-    seguido) pra acrescentar cache_mode=CacheMode.ENABLED — sem essa
-    sobrescrita, o AdaptiveCrawler usa o default da lib (BYPASS) e nunca
-    cacheia nada. O resto do método é uma cópia fiel do original (mesmos
-    parâmetros de link_preview_config e score_links), só com esse único
-    campo a mais.
+    seguido). O resto do método é uma cópia fiel do original (mesmos
+    parâmetros de link_preview_config e score_links), só com esses dois
+    campos a mais.
     """
 
     async def _crawl_with_preview(self, url: str, query: str):
@@ -101,6 +107,12 @@ class CachedAdaptiveCrawler(AdaptiveCrawler):
             ),
             score_links=True,
             cache_mode=CacheMode.ENABLED,
+            # cache_mode=ENABLED sozinho só serve o cache indefinidamente,
+            # sem nunca checar se a página mudou (achado real, 6.4 v2).
+            # check_cache_freshness=True é o parâmetro que de fato liga o
+            # Smart Cache (CacheValidator: ETag/Last-Modified, com
+            # fallback por hash do <head>) antes de confiar no cache.
+            check_cache_freshness=True,
         )
         try:
             result = await self.crawler.arun(url=url, config=config)
@@ -183,7 +195,8 @@ def crawl_adaptive(
     via FilterChain nativo em cada rodada de ranking de links.
 
     use_smart_cache=True (default) ativa o Smart Cache nativo do Crawl4AI
-    (ETag/Last-Modified + fallback por hash do <head>), persistido em
+    de verdade: cache_mode=ENABLED + check_cache_freshness=True (ETag/
+    Last-Modified + fallback por hash do <head>), persistido em
     ~/.crawl4ai/crawl4ai.db entre execuções separadas — páginas não
     mudadas desde a última visita são revalidadas sem re-baixar o corpo
     inteiro. Combinado com o dedup por content_hash do crawl_scope (6.2/

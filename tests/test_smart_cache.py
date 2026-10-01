@@ -49,8 +49,13 @@ def main():
     assert used_config.cache_mode == CacheMode.ENABLED, (
         f"esperado CacheMode.ENABLED, veio {used_config.cache_mode}"
     )
+    assert used_config.check_cache_freshness is True, (
+        "check_cache_freshness=True é o que de fato liga a validação "
+        "ETag/Last-Modified — sem ele, cache_mode=ENABLED sozinho só "
+        "serve o cache pra sempre, sem nunca revalidar"
+    )
     assert result.url == "https://exemplo.com/"
-    print("[ok] CachedAdaptiveCrawler usa cache_mode=CacheMode.ENABLED no fetch.")
+    print("[ok] CachedAdaptiveCrawler usa cache_mode=ENABLED + check_cache_freshness=True no fetch.")
 
     # Caso 2: score_links e link_preview_config continuam presentes
     # (a sobrescrita não perdeu nada do comportamento original)

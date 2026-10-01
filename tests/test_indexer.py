@@ -2,11 +2,15 @@
 Fase 06 - 6.3: Teste do indexador (index_crawl_state) com Qdrant fake e
 embed_texts fake via monkeypatch — sem rede, sem Qdrant/Ollama reais.
 Mesmo padrão de monkeypatch já usado em tests/test_add_note.py (Fase 05).
+Fase 06 - 6.5: FakeQdrantClient ganhou count()/delete() porque
+index_crawl_state() agora chama enforce_storage_limit() (retention.py) ao
+final de toda indexação.
 """
 
 import os
 import sys
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src", "crawler"))
 import indexer as indexer_module
@@ -31,20 +35,46 @@ class FakeCrawlState:
     metrics: dict = field(default_factory=dict)
 
 
+def _match_value(filter_obj, key):
+    for cond in filter_obj.must:
+        if cond.key == key:
+            return cond.match.value
+    return None
+
+
 class FakeQdrantClient:
-    """Reimplementa só scroll (dedup por content_hash) e upsert."""
+    """Reimplementa scroll (dedup por content_hash E full-scan pra
+    retention), count e delete (por crawl_id) e upsert — o suficiente pro
+    indexer.py + retention.py, sem depender de um Qdrant real. Com poucos
+    crawl_ids (como nestes testes) e DEFAULT_MAX_CRAWL_IDS=50, a retenção
+    nunca chega a remover nada aqui — isso é coberto à parte em
+    test_retention.py."""
 
     def __init__(self, existing_hashes=None):
         self._hashes = set(existing_hashes or [])
         self.upserted = []
 
-    def scroll(self, collection_name, scroll_filter, limit=1, **kwargs):
-        chash = None
-        for cond in scroll_filter.must:
-            if cond.key == "content_hash":
-                chash = cond.match.value
-        found = chash in self._hashes
-        return ([FakePoint(id="x", payload={})] if found else []), None
+    def scroll(self, collection_name, scroll_filter=None, limit=1, offset=None, **kwargs):
+        if scroll_filter is not None:
+            # Lookup de dedup por content_hash (is_already_crawled)
+            chash = _match_value(scroll_filter, "content_hash")
+            found = chash in self._hashes
+            return ([FakePoint(id="x", payload={})] if found else []), None
+
+        # Full-scan paginado (retention._earliest_crawled_at_per_crawl_id)
+        start = offset or 0
+        batch = self.upserted[start : start + limit]
+        next_offset = start + limit if start + limit < len(self.upserted) else None
+        return batch, next_offset
+
+    def count(self, collection_name, count_filter):
+        crawl_id = _match_value(count_filter, "crawl_id")
+        n = sum(1 for p in self.upserted if p.payload.get("crawl_id") == crawl_id)
+        return SimpleNamespace(count=n)
+
+    def delete(self, collection_name, points_selector):
+        crawl_id = _match_value(points_selector.filter, "crawl_id")
+        self.upserted = [p for p in self.upserted if p.payload.get("crawl_id") != crawl_id]
 
     def upsert(self, collection_name, points):
         self.upserted.extend(points)
